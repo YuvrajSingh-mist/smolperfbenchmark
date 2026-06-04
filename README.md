@@ -13,8 +13,8 @@ smolbenchmark/
 │   ├── README.MD
 │   ├── bench-non-reasoning.sh
 │   ├── generate_combined_charts.py
-│   ├── benchmark_report.md        # published report
 │   └── artifacts/
+│   
 ├── bonsai-models/                 # Bonsai / Ternary-Bonsai family
 │   ├── README.md
 │   ├── benchmark_all_bonsai.sh
@@ -39,8 +39,7 @@ More platform folders coming soon (Mac Mini, Raspberry Pi, phones, and tablets).
 
 | Report | Hardware | Models | Metrics |
 |--------|----------|--------|---------|
-| [Non-Reasoning LLM Benchmark](./non-reasoning-models/benchmark_report.md) | Jetson Orin Nano Super 8GB | 8 tiny instruct LLMs | tok/s, tok/J, TTFT, ITL, power, latency |
-| [Bonsai Models Report](./bonsai-models/artifacts/benchmark_report.md) | Jetson Orin Nano Super 8GB | 6 Bonsai variants | tok/s, tok/J, TTFT, ITL, power |
+| [Non-Reasoning LLM Benchmark]() | Jetson Orin Nano Super 8GB | 8 tiny instruct LLMs | tok/s, tok/J, TTFT, ITL, power, latency |
 
 ## Raw Data
 
