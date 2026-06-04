@@ -41,14 +41,7 @@ More platform folders coming soon (Mac Mini, Raspberry Pi, phones, and tablets).
 |--------|----------|--------|---------|
 | [Non-Reasoning LLM Benchmark](https://www.smolhub.com/posts/jetson-nano-super-benchmark-non-reasoning/) | Jetson Orin Nano Super 8GB | 8 tiny instruct LLMs | tok/s, tok/J, TTFT, ITL, power, latency |
 
-## Raw Data
 
-Complete per-cell JSON exports are published on Hugging Face Datasets:
-
-- [jetson-non-reasoning-benchmark-7w](https://huggingface.co/datasets/YuvrajSingh9886/jetson-non-reasoning-benchmark-7w)
-- [jetson-non-reasoning-benchmark-15w](https://huggingface.co/datasets/YuvrajSingh9886/jetson-non-reasoning-benchmark-15w)
-- [jetson-non-reasoning-benchmark-25w](https://huggingface.co/datasets/YuvrajSingh9886/jetson-non-reasoning-benchmark-25w)
-- [jetson-non-reasoning-benchmark-maxn](https://huggingface.co/datasets/YuvrajSingh9886/jetson-non-reasoning-benchmark-maxn)
 
 ## Philosophy
 
