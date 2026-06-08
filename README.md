@@ -25,11 +25,11 @@ smolbenchmark/
 
 ## Benchmarks
 
-### [non-reasoning-models](./jetson-nano-orin-super/non-reasoning-models/)
+### [non-reasoning-models](./benchmark-jetson-nano-orin-super/non-reasoning-models/)
 
 Eight tiny instruct LLMs (135M-1.2B params) benchmarked across four power envelopes on a Jetson Orin Nano Super 8GB. Tests throughput, latency, and energy efficiency (output tok/J) at every prompt x generation combination using both llama.cpp and Ollama backends. Includes a full published report with comparison charts and appendices.
 
-### [bonsai-models](./jetson-nano-orin-super/bonsai-models/)
+### [bonsai-models](./benchmark-jetson-nano-orin-super/bonsai-models/)
 
 Bonsai and Ternary-Bonsai model families (1.7B / 4B / 8B) with extreme quantization (Q1_0 / Q2_0) on Jetson hardware. Benchmarks throughput, energy efficiency, and latency across multiple power modes.
 
