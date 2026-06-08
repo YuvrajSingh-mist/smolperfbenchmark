@@ -40,6 +40,8 @@ More platform folders coming soon (Mac Mini, Raspberry Pi, phones, and tablets).
 | Report | Hardware | Models | Metrics |
 |--------|----------|--------|---------|
 | [Non-Reasoning LLM Benchmark](https://www.smolhub.com/posts/jetson-nano-super-benchmark-non-reasoning/) | Jetson Orin Nano Super 8GB | 8 tiny instruct LLMs | tok/s, tok/J, TTFT, ITL, power, latency |
+| [Bonsai LLM Benchmark]([https://www.smolhub.com/posts/jetson-nano-super-benchmark-non-reasoning/)] | Jetson Orin Nano Super 8GB | 8 tiny instruct LLMs | tok/s, tok/J, TTFT, ITL, power, latency |
+
 
 
 
