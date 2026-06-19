@@ -66,7 +66,7 @@ HF_CLI="$HOME/venv/bin/hf"
 BASE_ARTIFACT=""
 TEGRA_PIDFILE="/tmp/bonsai_bench_tegrastats.pid"
 SERVER_PIDFILE="/tmp/bonsai_bench_server.pid"
-REPORT_PY="/tmp/bonsai_report.py"
+
 
 # ── Model table: name|quant|gguf_path|tokenizer|hf_repo|hf_filename|ctx_size ──
 declare -a MODELS=(
@@ -588,192 +588,16 @@ for m in "${SKIPPED_MODELS[@]}"; do echo "    [FAIL] $m"; done
 echo ""
 
 if [ "${#BENCH_MODELS[@]}" = 0 ]; then
-    echo "  No models passed smoke test — no report generated."; exit 1
+    echo "  No models completed benchmarking."; exit 1
 fi
-
-# ── Phase 7: Generate report.md ───────────────────────────────────────────────
-banner "Phase 7: Generating report.md"
-
-cat > "$REPORT_PY" << 'PYEOF'
-import re, sys, json, os, glob
-from datetime import datetime
-
-base_dir    = sys.argv[1]
-tegra_log   = sys.argv[2]
-timing_log  = sys.argv[3]
-skipped_arg = sys.argv[4] if len(sys.argv) > 4 else ""
-ctx_size    = sys.argv[5] if len(sys.argv) > 5 else "?"
-backend     = sys.argv[6] if len(sys.argv) > 6 else "llamacpp"
-report_path = os.path.join(base_dir, "report.md")
-
-skipped = [s for s in skipped_arg.split("||") if s] if skipped_arg else []
-
-class PowerSample:
-    def __init__(self, ts, pw, cpu_t, gpu_t, tj_t):
-        self.ts=ts; self.pw=pw; self.cpu_t=cpu_t; self.gpu_t=gpu_t; self.tj_t=tj_t
-
-samples = []
-try:
-    for line in open(tegra_log):
-        ts_m = re.match(r'(\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2})', line)
-        if not ts_m: continue
-        try: ts = datetime.strptime(ts_m.group(1), "%m-%d-%Y %H:%M:%S").timestamp()
-        except: continue
-        pw_m  = re.search(r'VDD_CPU_GPU_CV (\d+)mW', line)
-        cpu_m = re.search(r'cpu@([\d.]+)C', line)
-        gpu_m = re.search(r'gpu@([\d.]+)C', line)
-        tj_m  = re.search(r'tj@([\d.]+)C',  line)
-        if pw_m:
-            samples.append(PowerSample(ts, int(pw_m.group(1))/1000.0,
-                float(cpu_m.group(1)) if cpu_m else None,
-                float(gpu_m.group(1)) if gpu_m else None,
-                float(tj_m.group(1))  if tj_m  else None))
-except FileNotFoundError:
-    pass
-
-def power_in_window(t0, t1):
-    w = [s for s in samples if t0 <= s.ts <= t1]
-    if not w: return None, None, None, None
-    avg_pw = sum(s.pw for s in w) / len(w)
-    cpu_t = [s.cpu_t for s in w if s.cpu_t is not None]
-    gpu_t = [s.gpu_t for s in w if s.gpu_t is not None]
-    tj_t  = [s.tj_t  for s in w if s.tj_t  is not None]
-    return (avg_pw,
-            sum(cpu_t)/len(cpu_t) if cpu_t else None,
-            sum(gpu_t)/len(gpu_t) if gpu_t else None,
-            max(tj_t)             if tj_t  else None)
-
-model_windows = {}
-try:
-    for line in open(timing_log):
-        line = line.strip()
-        if line.startswith("MODEL_START:"):
-            _, name, ts = line.split(":", 2)
-            model_windows.setdefault(name, {})["start"] = float(ts)
-        elif line.startswith("MODEL_END:"):
-            _, name, ts = line.split(":", 2)
-            model_windows.setdefault(name, {})["end"] = float(ts)
-except FileNotFoundError:
-    pass
-
-results = []
-for json_path in sorted(glob.glob(f"{base_dir}/**/profile_export_aiperf.json", recursive=True)):
-    rel   = os.path.relpath(json_path, base_dir)
-    parts = rel.split(os.sep)
-    if len(parts) < 4: continue
-    model_name = parts[0]
-    gen = int(re.sub(r'\D', '', parts[1]))
-    ctx = int(re.sub(r'\D', '', parts[2]))
-    try: d = json.load(open(json_path))
-    except: continue
-    ttft = (d.get("time_to_first_token",              {}) or {}).get("avg")
-    itl  = (d.get("inter_token_latency",              {}) or {}).get("avg")
-    tps  = (d.get("output_token_throughput_per_user", {}) or {}).get("avg")
-    rl   = (d.get("request_latency",                  {}) or {}).get("avg")
-    win  = model_windows.get(model_name, {})
-    avg_pw, avg_cpu, avg_gpu, peak_tj = power_in_window(win.get("start",0), win.get("end",9e18))
-    tok_j = (tps / avg_pw) if (tps and avg_pw) else None
-    quant = "Q2_0" if "Ternary" in model_name else "Q1_0"
-    bits  = "1.58-bit" if quant == "Q2_0" else "1-bit"
-    results.append({"model": model_name, "quant": quant, "bits": bits,
-        "prompt": ctx, "gen": gen,
-        "ttft": ttft, "itl": itl, "tps": tps, "req_lat": rl,
-        "power_w": avg_pw, "avg_cpu_c": avg_cpu, "avg_gpu_c": avg_gpu,
-        "peak_tj_c": peak_tj, "tok_j": tok_j})
-
-results.sort(key=lambda r: (r["model"], r["gen"], r["prompt"]))
-
-thermal = {}
-for model_name, win in model_windows.items():
-    avg_pw, avg_cpu, avg_gpu, peak_tj = power_in_window(win.get("start",0), win.get("end",9e18))
-    thermal[model_name] = {"avg_pw": avg_pw, "avg_cpu": avg_cpu,
-        "avg_gpu": avg_gpu, "peak_tj": peak_tj,
-        "throttled": peak_tj is not None and peak_tj > 85}
-
-best_tokj = {}
-for r in results:
-    m = r["model"]
-    if r["tok_j"] is not None:
-        if m not in best_tokj or r["tok_j"] > best_tokj[m]["tok_j"]: best_tokj[m] = r
-
-lines = []
-def L(s=""): lines.append(s)
-def fmt(v, fmt_str, fallback="—"):
-    return format(v, fmt_str) if v is not None else fallback
-
-L("# Bonsai All-Model Benchmark — Jetson Orin Nano Super 8GB")
-L()
-L(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}  ")
-L(f"**Backend:** {backend}  **Context:** {ctx_size} tokens  **Concurrency:** 1  ")
-L(f"**Sweep:** prompt in {{256,512,1024,2048}}  gen in {{128,256,512}}")
-L(f"**Artifacts:** `{base_dir}`")
-L()
-
-if skipped:
-    L("## Skipped Models")
-    L()
-    for s in skipped: L(f"- {s}")
-    L()
-
-L("## Full Results")
-L()
-L("| Model | Bits | Prompt (tok) | Gen (tok) | TTFT avg (ms) | ITL avg (ms) | Tok/s | Power (W) | **Tok/J** |")
-L("|-------|:----:|:---:|:---:|---:|---:|---:|---:|---:|")
-for r in results:
-    L(f"| {r['model']} | {r['bits']} | {r['prompt']} | {r['gen']} "
-      f"| {fmt(r['ttft'], '.0f')} "
-      f"| {fmt(r['itl'], '.2f')} "
-      f"| {fmt(r['tps'], '.2f')} "
-      f"| {fmt(r['power_w'], '.2f')} "
-      f"| **{fmt(r['tok_j'], '.4f')}** |")
-
-L()
-L("## Per-Model Best Tok/J")
-L()
-L("| Model | Bits | Best Tok/J | Prompt (tok) | Gen (tok) | Tok/s | Power (W) |")
-L("|-------|:----:|---:|:---:|:---:|---:|---:|")
-for model_name in sorted(best_tokj.keys()):
-    b = best_tokj[model_name]
-    L(f"| {b['model']} | {b['bits']} | **{fmt(b['tok_j'], '.4f')}** "
-      f"| {b['prompt']} | {b['gen']} "
-      f"| {fmt(b['tps'], '.2f')} | {fmt(b['power_w'], '.2f')} |")
-
-L()
-L("## Thermal Summary")
-L()
-L("| Model | Avg Power (W) | Avg CPU (C) | Avg GPU (C) | Peak TJ (C) | Throttled |")
-L("|-------|---:|---:|---:|---:|:---:|")
-for model_name in sorted(thermal.keys()):
-    t = thermal[model_name]
-    L(f"| {model_name} "
-      f"| {fmt(t['avg_pw'], '.2f')} "
-      f"| {fmt(t['avg_cpu'], '.1f')} "
-      f"| {fmt(t['avg_gpu'], '.1f')} "
-      f"| {fmt(t['peak_tj'], '.1f')} "
-      f"| {'YES' if t['throttled'] else 'No'} |")
-
-L()
-L("---")
-L(f"*Generated by `benchmark_all_bonsai.sh` ({backend}) on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
-
-with open(report_path, "w") as f:
-    f.write("\n".join(lines) + "\n")
-
-print(f"\n  Report -> {report_path}")
-print(f"  {len(results)} rows  |  {len(thermal)} models  |  {len(skipped)} skipped")
-PYEOF
-
-SKIPPED_STR=""
-for s in "${SKIPPED_MODELS[@]}"; do SKIPPED_STR="${SKIPPED_STR}${s}||"; done
-
-python3 "$REPORT_PY" \
-    "$BASE_ARTIFACT" "$TEGRA_LOG" "$TIMING_LOG" \
-    "$SKIPPED_STR" "$CONTEXT_SIZE" "$BACKEND"
 
 banner "Done"
 echo "  Backend   : $BACKEND"
 echo "  Artifacts : $BASE_ARTIFACT"
-echo "  Report    : $BASE_ARTIFACT/report.md"
+echo ""
+echo "  Generate charts:"
+echo "    source ~/venv/bin/activate"
+echo "    python3 generate_combined_charts.py"
 echo ""
 echo "  Dashboard (optional):"
 echo "    source ~/venv/bin/activate"

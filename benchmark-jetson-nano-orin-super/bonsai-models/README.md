@@ -2,6 +2,8 @@
 
 Throughput and energy-efficiency benchmarks for the Bonsai and Ternary-Bonsai model families running on a Jetson Orin Nano Super 8GB. Measures tok/s, TTFT, ITL, and tok/J (tokens per joule) across all six model variants at four nvpmodel power envelopes.
 
+**Published results:** [Jetson Orin Nano Super Bonsai Benchmark — smolhub.com](https://www.smolhub.com/posts/jetson-orin-nano-super-bonsai-benchmark/)
+
 ---
 
 ## Table of Contents
@@ -52,7 +54,7 @@ All models use size-matched Qwen3 tokenizers (1.7B→Qwen3-1.7B, 4B→Qwen3-4B, 
 | **Tok/s** | Output token throughput per user |
 | **Tok/J** | Tokens per joule — tok/s ÷ VDD_CPU_GPU_CV (W). Primary efficiency metric. |
 
-Sweep: 4 prompt lengths × 3 gen lengths × 10 requests = 12 runs per model, 72 per power mode.
+Sweep: 4 prompt lengths × 3 gen lengths × 20 requests = 12 combos per model, 72 per power mode.
 
 | Prompt tokens | 256 | 512 | 1024 | 2048 |
 |---|---|---|---|---|
@@ -192,14 +194,14 @@ Also implies `--skip-download`.
 ```bash
 # Resume a 25W run
 bash benchmark_all_bonsai.sh \
-  --resume artifacts/llamacpp/bonsai-all-YYYYMMDD-HHMM \
+  --resume artifacts/llamacpp/bonsai-llamacpp-YYYYMMDD-HHMM \
   --power-mode 1 \
   --reqs 20
 
 # Rerun only one missing model in an existing run
 bash benchmark_all_bonsai.sh \
   --only Ternary-Bonsai-4B \
-  --resume artifacts/llamacpp/bonsai-all-YYYYMMDD-HHMM \
+  --resume artifacts/llamacpp/bonsai-llamacpp-YYYYMMDD-HHMM \
   --power-mode 1
 ```
 
@@ -208,7 +210,7 @@ Always run inside tmux when resuming so the session survives disconnects:
 ```bash
 tmux new-session -d -s bonsai-bench && \
 tmux send-keys -t bonsai-bench "cd ~/Desktop/smolbenchmark/benchmark-jetson-nano-orin-super/bonsai-models && \
-bash benchmark_all_bonsai.sh --resume artifacts/llamacpp/bonsai-all-YYYYMMDD-HHMM --power-mode 1 --reqs 20" Enter && \
+bash benchmark_all_bonsai.sh --resume artifacts/llamacpp/bonsai-llamacpp-YYYYMMDD-HHMM --power-mode 1 --reqs 20" Enter && \
 tmux attach -t bonsai-bench
 ```
 
@@ -261,7 +263,7 @@ Print the full list of models and combos that would run without executing anythi
 Each run creates a timestamped directory under `artifacts/`:
 
 ```
-artifacts/llamacpp/bonsai-all-YYYYMMDD-HHMM/
+artifacts/llamacpp/bonsai-llamacpp-YYYYMMDD-HHMM/
 ├── tegrastats.log               # raw power + thermal samples (500ms interval)
 ├── model_timing.log             # per-model start/end epochs for power windowing
 ├── <ModelName>-server.log       # llama-server stdout per model
@@ -269,26 +271,30 @@ artifacts/llamacpp/bonsai-all-YYYYMMDD-HHMM/
     └── gen<G>/
         └── ctx<P>/
             ├── profile_export_aiperf.json
-            └── profile_export_aiperf_timeslices.json
+            ├── profile_export_aiperf_timeslices.json
+            └── profile_export.jsonl             # per-request nanosecond timestamps
 ```
 
 ---
 
 ## Generating Reports
 
-### Per-run report
+### Per-run summary
+
+Generates `RESULTS.md` with all cells, best tok/J per model, and thermal data.
+Uses the same phase-separated power method as the combined charts (decode energy from `profile_export.jsonl`).
 
 ```bash
-python3 gen_report.py --artifact llamacpp/bonsai-all-20260527-0200-25W --label "25W"
-# writes artifacts/llamacpp/bonsai-all-20260527-0200-25W/report.md
+python3 generate_report.py artifacts/llamacpp/bonsai-llamacpp-YYYYMMDD-HHMM/
+# writes artifacts/llamacpp/bonsai-llamacpp-YYYYMMDD-HHMM/RESULTS.md
 ```
 
 ### Combined charts (multi-run comparison)
 
-Edit the `RUNS` dict in `gen_combined_charts.py` to include your artifact dirs, then:
+Edit the `RUNS` dict in `generate_combined_charts.py` to point at your artifact dirs, then:
 
 ```bash
 source ~/venv/bin/activate
-python3 gen_combined_charts.py
+python3 generate_combined_charts.py
 # writes artifacts/charts/*.png
 ```

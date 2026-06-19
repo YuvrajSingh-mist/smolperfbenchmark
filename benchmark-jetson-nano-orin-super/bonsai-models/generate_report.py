@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-generate_report.py — Jetson Orin LLM Benchmark Report Generator
+generate_report.py — Bonsai Benchmark Per-Run Report Generator
 
 Usage:
-    python3 generate_report.py artifacts/blog-20260524-1200/
+    python3 generate_report.py artifacts/llamacpp/bonsai-llamacpp-YYYYMMDD-HHMM/
 
-Reads all profile_export_aiperf.json files, FAILURES.log, model-exam-*.log,
-thermal_summary.log; writes RESULTS.md in the artifact directory.
+Reads profile_export_aiperf.json + profile_export.jsonl per cell,
+tegrastats.log and model_timing.log from the artifact root.
+Writes RESULTS.md in the artifact directory.
+
+tok/J uses exact per-request phase power (same method as generate_combined_charts.py):
+  decode_j  = decode_power_W × p50_decode_s
+  output_tok_j = OSL / decode_j
 """
 
 import argparse
@@ -17,137 +22,235 @@ import re
 import sys
 from datetime import datetime
 
+import numpy as np
 
-def load_results(base_dir):
+
+# ── Tegrastats loader ─────────────────────────────────────────────────────────
+
+def load_tegra(base_dir):
+    records = []
+    path = os.path.join(base_dir, "tegrastats.log")
+    if not os.path.exists(path):
+        return records
+    with open(path) as f:
+        for line in f:
+            m = re.match(r'(\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2})', line)
+            if not m:
+                continue
+            try:
+                ep = datetime.strptime(m.group(1), '%m-%d-%Y %H:%M:%S').timestamp()
+            except ValueError:
+                continue
+            pw = re.search(r'VDD_CPU_GPU_CV (\d+)mW', line)
+            tj = re.search(r'tj@([\d.]+)C', line)
+            if pw:
+                records.append((ep, int(pw.group(1)), float(tj.group(1)) if tj else None))
+    return records
+
+
+def load_model_windows(base_dir):
+    windows = {}
+    path = os.path.join(base_dir, "model_timing.log")
+    if not os.path.exists(path):
+        return windows
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("MODEL_START:"):
+                _, name, ts = line.split(":", 2)
+                windows.setdefault(name, {})["start"] = float(ts)
+            elif line.startswith("MODEL_END:"):
+                _, name, ts = line.split(":", 2)
+                windows.setdefault(name, {})["end"] = float(ts)
+    return windows
+
+
+# ── Phase-separated power from jsonl ─────────────────────────────────────────
+
+def compute_tok_j(aiperf_path, tegra_records):
+    """Return (tok_j, prefill_power_w, decode_power_w, decode_j) or Nones on failure."""
+    try:
+        d = json.load(open(aiperf_path))
+    except Exception:
+        return None, None, None, None
+
+    def pct(k, v="p50"):
+        return (d.get(k) or {}).get(v)
+
+    osl    = pct("output_sequence_length", "p50")
+    ttft   = pct("time_to_first_token",    "p50")
+    t0_str = d.get("start_time")
+    t1_str = d.get("end_time")
+
+    if not (osl and ttft and t0_str and t1_str):
+        return None, None, None, None
+
+    t0 = datetime.fromisoformat(t0_str).timestamp()
+    t1 = datetime.fromisoformat(t1_str).timestamp()
+    samp_records = [(ep, mw) for (ep, mw, _) in tegra_records if t0 <= ep <= t1]
+    if not samp_records:
+        return None, None, None, None
+
+    jsonl_path = os.path.join(os.path.dirname(aiperf_path), "profile_export.jsonl")
+    prefill_mw, decode_mw = [], []
+    p50_decode_s = None
+
+    if os.path.exists(jsonl_path):
+        per_req = []
+        with open(jsonl_path) as fj:
+            for line in fj:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec  = json.loads(line)
+                    meta = rec.get("metadata", {})
+                    if (meta.get("benchmark_phase") == "profiling"
+                            and "request_start_ns" in meta
+                            and "request_ack_ns"   in meta
+                            and "request_end_ns"   in meta):
+                        per_req.append((meta["request_start_ns"],
+                                        meta["request_ack_ns"],
+                                        meta["request_end_ns"]))
+                except Exception:
+                    continue
+
+        if per_req:
+            prefill_wins = [(s / 1e9, a / 1e9) for s, a, e in per_req]
+            decode_wins  = [(a / 1e9, e / 1e9) for s, a, e in per_req]
+
+            for ep, mw in samp_records:
+                if any(ws <= ep <= wa for ws, wa in prefill_wins):
+                    prefill_mw.append(mw)
+                elif any(wa < ep <= we for wa, we in decode_wins):
+                    decode_mw.append(mw)
+
+            p50_decode_s = float(np.median([(e - a) / 1e9 for s, a, e in per_req]))
+
+    # Fallback to timeline reconstruction if jsonl missing or no samples classified
+    if not prefill_mw or not decode_mw:
+        rl_p50_ms = pct("request_latency", "p50")
+        if rl_p50_ms and ttft:
+            rl_s   = rl_p50_ms / 1000.0
+            ttft_s = ttft / 1000.0
+            n_reqs = int(pct("request_count", "avg") or 20)
+            for ep, mw in samp_records:
+                elapsed      = ep - t0
+                req_idx      = int(elapsed / rl_s)
+                if req_idx >= n_reqs:
+                    continue
+                phase_elapsed = elapsed - req_idx * rl_s
+                if phase_elapsed <= ttft_s:
+                    prefill_mw.append(mw)
+                else:
+                    decode_mw.append(mw)
+            if p50_decode_s is None:
+                p50_decode_s = rl_s - ttft / 1000.0
+
+    all_mw = [mw for ep, mw in samp_records]
+    fallback_w = float(np.median(all_mw)) / 1000 if all_mw else None
+
+    prefill_power_w = float(np.median(prefill_mw)) / 1000 if prefill_mw else fallback_w
+    decode_power_w  = float(np.median(decode_mw))  / 1000 if decode_mw  else fallback_w
+
+    p50_ttft_s = ttft / 1000.0
+    decode_j   = decode_power_w  * p50_decode_s if (decode_power_w  and p50_decode_s) else None
+    tok_j      = osl / decode_j  if (osl and decode_j and decode_j > 0) else None
+
+    return tok_j, prefill_power_w, decode_power_w, decode_j
+
+
+# ── Results loader ─────────────────────────────────────────────────────────────
+
+def load_results(base_dir, tegra_records):
     results = []
     pattern = os.path.join(base_dir, "**", "profile_export_aiperf.json")
     for path in glob.glob(pattern, recursive=True):
-        rel = os.path.relpath(path, base_dir)
+        rel   = os.path.relpath(path, base_dir)
         parts = rel.split(os.sep)
-        # Expected: {backend}/{model-safe-quant}/ctx-{C}_out-{O}/profile_export_aiperf.json
+        # Expected: {ModelName}/gen{G}/ctx{C}/profile_export_aiperf.json
         if len(parts) < 4:
             continue
-        backend = parts[0]
-        if backend not in ("ollama", "llamacpp"):
+        model_name = parts[0]
+        gen_m = re.search(r'(\d+)', parts[1])
+        ctx_m = re.search(r'(\d+)', parts[2])
+        if not gen_m or not ctx_m:
             continue
-        model_quant_safe = parts[1]
-        cell_dir = parts[2]
-
-        ctx_m = re.search(r"ctx-(\d+)", cell_dir)
-        out_m = re.search(r"out-(\d+)", cell_dir)
-        if not ctx_m or not out_m:
-            continue
+        gen = int(gen_m.group(1))
         ctx = int(ctx_m.group(1))
-        out_len = int(out_m.group(1))
-
-        # Split model_quant_safe: model-safe + quant suffix
-        # quant is lowercase, e.g. q8_0 / q4_k_m
-        quant_m = re.search(r"-([qQ]\d+[_k]*[_m]*)$", model_quant_safe)
-        if quant_m:
-            quant = quant_m.group(1).upper()
-            model_safe = model_quant_safe[: quant_m.start()]
-        else:
-            quant = "unknown"
-            model_safe = model_quant_safe
-
-        # Reconstruct display model name (best effort)
-        model_display = model_safe.replace("-", ":", 1)
 
         try:
             d = json.load(open(path))
-            ttft = (d.get("time_to_first_token", {}) or {}).get("avg", 0)
-            itl = (d.get("inter_token_latency", {}) or {}).get("avg", 0)
-            tps = (d.get("output_token_throughput_per_user", {}) or {}).get("avg", 0)
-            rl = (d.get("request_latency", {}) or {}).get("avg", 0)
-            results.append(
-                {
-                    "backend": backend,
-                    "model_safe": model_safe,
-                    "model": model_display,
-                    "quant": quant,
-                    "ctx": ctx,
-                    "out_len": out_len,
-                    "ttft_ms": round(ttft, 1),
-                    "itl_ms": round(itl, 3),
-                    "tps": round(tps, 2),
-                    "req_lat_s": round(rl / 1000, 2),
-                    "path": path,
-                }
-            )
-        except Exception as e:
-            print(f"  [!] Error reading {path}: {e}", file=sys.stderr)
+        except Exception:
+            continue
 
-    return results
+        def pct(k, v="p50"):
+            return (d.get(k) or {}).get(v)
 
+        ttft    = pct("time_to_first_token",              "p50")
+        itl     = pct("inter_token_latency",              "p50")
+        tok_s   = pct("output_token_throughput_per_user", "p50")
+        rl_p50  = pct("request_latency",                  "p50")
+        osl     = pct("output_sequence_length",           "p50")
+        prefill = pct("prefill_throughput_per_user",      "p50")
+        err_cnt = (d.get("error_request_count") or {}).get("avg")
 
-def load_failures(base_dir):
-    failures = []
-    flog = os.path.join(base_dir, "FAILURES.log")
-    if not os.path.exists(flog):
-        return failures
-    with open(flog) as f:
-        for line in f:
-            line = line.strip()
-            if not line or "FAIL" not in line:
-                continue
-            # Format: [ts] FAIL  backend=X  model=Y  reason=Z
-            ts_m = re.match(r"\[([^\]]+)\]", line)
-            ts = ts_m.group(1) if ts_m else ""
-            backend = re.search(r"backend=(\S+)", line)
-            model = re.search(r"model=(\S+)", line)
-            reason = re.search(r"reason=(.+)$", line)
-            failures.append(
-                {
-                    "ts": ts,
-                    "backend": backend.group(1) if backend else "",
-                    "model": model.group(1) if model else "",
-                    "reason": reason.group(1) if reason else line,
-                }
-            )
-    return failures
+        tok_j, prefill_pw, decode_pw, decode_j = compute_tok_j(path, tegra_records)
+
+        quant = "Q2_0 (1.58-bit)" if "Ternary" in model_name else "Q1_0 (1-bit)"
+
+        results.append({
+            "model":          model_name,
+            "quant":          quant,
+            "ctx":            ctx,
+            "gen":            gen,
+            "ttft_ms":        round(ttft,    1) if ttft    else None,
+            "itl_ms":         round(itl,     3) if itl     else None,
+            "tok_s":          round(tok_s,   2) if tok_s   else None,
+            "rl_ms":          round(rl_p50,  1) if rl_p50  else None,
+            "osl":            round(osl,     1) if osl     else None,
+            "prefill_tps":    round(prefill, 1) if prefill else None,
+            "tok_j":          round(tok_j,   4) if tok_j   else None,
+            "prefill_pw":     round(prefill_pw, 3) if prefill_pw else None,
+            "decode_pw":      round(decode_pw,  3) if decode_pw  else None,
+            "decode_j":       round(decode_j,   5) if decode_j   else None,
+            "errors":         int(err_cnt) if err_cnt else 0,
+            "path":           path,
+        })
+
+    return sorted(results, key=lambda r: (r["model"], r["ctx"], r["gen"]))
 
 
-def load_exam_log(base_dir):
-    exam_entries = []
-    pattern = os.path.join(base_dir, "model-exam-*.log")
-    for path in glob.glob(pattern):
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("PASS") or line.startswith("FAIL"):
-                    exam_entries.append(line)
-    return exam_entries
+# ── Thermal summary from tegrastats ──────────────────────────────────────────
+
+def thermal_summary(tegra_records, model_windows):
+    summary = {}
+    for model, win in model_windows.items():
+        t0, t1 = win.get("start", 0), win.get("end", 9e18)
+        w = [(mw, tj) for (ep, mw, tj) in tegra_records if t0 <= ep <= t1]
+        if not w:
+            continue
+        mw_vals = [x[0] for x in w]
+        tj_vals  = [x[1] for x in w if x[1] is not None]
+        summary[model] = {
+            "avg_pw": round(float(np.median(mw_vals)) / 1000, 2),
+            "peak_tj": round(max(tj_vals), 1) if tj_vals else None,
+            "throttled": max(tj_vals) > 85 if tj_vals else False,
+        }
+    return summary
 
 
-def load_thermal(base_dir):
-    thermal = {"avg_power_w": None, "max_tj_c": None, "throttled": False}
-    tlog = os.path.join(base_dir, "thermal_summary.log")
-    if not os.path.exists(tlog):
-        return thermal
-    content = open(tlog).read()
-    # Parse avg power after cutoff
-    m = re.search(r"Power \(after cutoff\).*?avg=([\d.]+)W", content)
-    if m:
-        thermal["avg_power_w"] = float(m.group(1))
-    # Max TJ temp
-    m = re.search(r"TJ.*?max=([\d.]+)C", content)
-    if m:
-        thermal["max_tj_c"] = float(m.group(1))
-    thermal["throttled"] = "THROTTLED" in content
-    return thermal
-
+# ── Markdown table helper ─────────────────────────────────────────────────────
 
 def md_table(headers, rows, alignments=None):
     if not rows:
         return "*No data.*\n"
-    # Determine column widths
     widths = [len(h) for h in headers]
     for row in rows:
         for i, cell in enumerate(row):
             widths[i] = max(widths[i], len(str(cell)))
-    lines = []
-    header_line = "| " + " | ".join(h.ljust(widths[i]) for i, h in enumerate(headers)) + " |"
-    lines.append(header_line)
+    def fmt_row(cells):
+        return "| " + " | ".join(str(c).ljust(widths[i]) for i, c in enumerate(cells)) + " |"
     sep_parts = []
     for i, w in enumerate(widths):
         align = alignments[i] if alignments else "left"
@@ -157,43 +260,22 @@ def md_table(headers, rows, alignments=None):
             sep_parts.append(":" + "-" * (w - 2) + ":")
         else:
             sep_parts.append("-" * w)
-    lines.append("| " + " | ".join(s.ljust(widths[i]) for i, s in enumerate(sep_parts)) + " |")
-    for row in rows:
-        lines.append("| " + " | ".join(str(cell).ljust(widths[i]) for i, cell in enumerate(row)) + " |")
-    return "\n".join(lines) + "\n"
+    return "\n".join([
+        fmt_row(headers),
+        "| " + " | ".join(s.ljust(widths[i]) for i, s in enumerate(sep_parts)) + " |",
+        *[fmt_row(r) for r in rows],
+    ]) + "\n"
 
 
-def get_system_info():
-    info = {}
-    # JetPack version
-    try:
-        v = open("/etc/nv_tegra_release").readline().strip()
-        info["jetpack"] = v
-    except Exception:
-        info["jetpack"] = "unknown"
-    # Ollama version
-    try:
-        import subprocess
-        r = subprocess.run(["ollama", "--version"], capture_output=True, text=True, timeout=5)
-        info["ollama"] = r.stdout.strip() or r.stderr.strip()
-    except Exception:
-        info["ollama"] = "unknown"
-    # llama.cpp git SHA
-    try:
-        import subprocess
-        r = subprocess.run(
-            ["git", "-C", os.path.expanduser("~/llama.cpp"), "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5
-        )
-        info["llamacpp_sha"] = r.stdout.strip()
-    except Exception:
-        info["llamacpp_sha"] = "unknown"
-    return info
+def fmt(v, spec, fallback="-"):
+    return format(v, spec) if v is not None else fallback
 
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate RESULTS.md from benchmark artifacts")
-    parser.add_argument("artifact_dir", help="Path to artifacts/blog-DATE/ directory")
+    parser = argparse.ArgumentParser(description="Generate RESULTS.md from bonsai benchmark artifacts")
+    parser.add_argument("artifact_dir", help="Path to bonsai artifact dir (e.g. artifacts/llamacpp/bonsai-llamacpp-YYYYMMDD-HHMM/)")
     args = parser.parse_args()
 
     base_dir = os.path.abspath(args.artifact_dir)
@@ -202,177 +284,95 @@ def main():
         sys.exit(1)
 
     print(f"Reading artifacts from: {base_dir}")
-    results = load_results(base_dir)
-    failures = load_failures(base_dir)
-    exam_entries = load_exam_log(base_dir)
-    thermal = load_thermal(base_dir)
-    sysinfo = get_system_info()
+    tegra_records  = load_tegra(base_dir)
+    model_windows  = load_model_windows(base_dir)
+    results        = load_results(base_dir, tegra_records)
+    therm          = thermal_summary(tegra_records, model_windows)
+    print(f"  {len(tegra_records)} tegrastats samples  |  {len(results)} result cells")
 
-    print(f"  Found {len(results)} result cells, {len(failures)} failures, {len(exam_entries)} exam entries")
-
-    # Compute tok/J
-    avg_power = thermal.get("avg_power_w")
-    for r in results:
-        if avg_power:
-            r["tok_per_j"] = round(r["tps"] / avg_power, 4)
-        else:
-            r["tok_per_j"] = None
-
-    out_path = os.path.join(base_dir, "RESULTS.md")
     sections = []
 
-    # ── Header ──────────────────────────────────────────────────────────────────
+    # Header
     sections.append(
-        f"# Jetson Nano Super Orin 8GB — LLM Efficiency Benchmark\n\n"
-        f"*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n"
+        f"# Bonsai Benchmark Results — Jetson Orin Nano Super 8GB\n\n"
+        f"*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*  \n"
+        f"*Artifact: `{os.path.basename(base_dir)}`*\n"
     )
 
-    # ── System info ─────────────────────────────────────────────────────────────
-    sys_rows = [
-        ["Device", "NVIDIA Jetson Orin Nano Super 8GB"],
-        ["JetPack", sysinfo.get("jetpack", "unknown")],
-        ["Ollama", sysinfo.get("ollama", "unknown")],
-        ["llama.cpp", f"git {sysinfo.get('llamacpp_sha', 'unknown')}"],
-        ["Run date", datetime.now().strftime("%Y-%m-%d")],
-        ["Models validated", f"{sum(1 for e in exam_entries if e.startswith('PASS'))} passed, "
-                              f"{sum(1 for e in exam_entries if e.startswith('FAIL'))} dropped"],
-    ]
-    sections.append("## System\n\n" + md_table(["Field", "Value"], sys_rows))
+    # Primary results table (all cells)
+    r_aligns = ["left", "left", "right", "right", "right", "right", "right", "right", "right", "right"]
+    r_hdrs   = ["Model", "Quant", "Ctx", "Gen", "TTFT p50 (ms)", "ITL p50 (ms)",
+                "Tok/s p50", "Decode W", "Tok/J", "Errors"]
+    r_rows = []
+    for r in results:
+        r_rows.append([
+            r["model"], r["quant"],
+            r["ctx"], r["gen"],
+            fmt(r["ttft_ms"], ".1f"),
+            fmt(r["itl_ms"],  ".2f"),
+            fmt(r["tok_s"],   ".2f"),
+            fmt(r["decode_pw"], ".2f"),
+            fmt(r["tok_j"],   ".4f"),
+            r["errors"] or "-",
+        ])
+    sections.append("## Full Results\n\n" + md_table(r_hdrs, r_rows, r_aligns))
 
-    # ── Model exam results ───────────────────────────────────────────────────────
-    if exam_entries:
-        exam_rows = []
-        for entry in exam_entries:
-            status = "✓ PASS" if entry.startswith("PASS") else "✗ FAIL"
-            parts = entry.split(maxsplit=2)
-            model = parts[1] if len(parts) > 1 else entry
-            reason = parts[2] if len(parts) > 2 else "—"
-            exam_rows.append([model, status, reason])
-        sections.append("## Model Validation Exam\n\n" + md_table(["Model", "Result", "Details"], exam_rows))
-    else:
-        sections.append("## Model Validation Exam\n\n*No exam log found.*\n")
-
-    # ── Primary results (ctx=512, out=128) ───────────────────────────────────────
-    primary = [r for r in results if r["ctx"] == 512 and r["out_len"] == 128]
-    primary.sort(key=lambda x: x["tps"], reverse=True)
-
-    if primary:
-        prows = []
-        for r in primary:
-            prows.append([
-                r["model"], r["backend"], r["quant"],
-                f"{r['tps']:.2f}", f"{r['ttft_ms']:.0f}", f"{r['itl_ms']:.2f}",
-                f"{avg_power:.1f}" if avg_power else "—",
-                f"{r['tok_per_j']:.4f}" if r["tok_per_j"] else "—",
-                f"{thermal['max_tj_c']:.1f}" if thermal["max_tj_c"] else "—",
-            ])
-        hdrs = ["Model", "Backend", "Quant", "tok/s ↑", "TTFT ms", "ITL ms", "Avg W", "tok/J ↑", "Max °C"]
-        aligns = ["left", "left", "left", "right", "right", "right", "right", "right", "right"]
-        sections.append("## Primary Results — ctx=512, out=128\n\n" + md_table(hdrs, prows, aligns))
-    else:
-        sections.append("## Primary Results — ctx=512, out=128\n\n*No results at ctx=512/out=128.*\n")
-
-    # ── Context scaling table (out=128 fixed) ───────────────────────────────────
-    ctx_vals = sorted(set(r["ctx"] for r in results if r["out_len"] == 128))
-    if len(ctx_vals) > 1:
-        # Get unique (model, backend, quant) combos
-        combos = sorted(set((r["model"], r["backend"], r["quant"]) for r in results if r["out_len"] == 128))
-        ctx_hdrs = ["Model", "Backend", "Quant"] + [f"ctx={c}" for c in ctx_vals]
-        ctx_rows = []
-        for model, backend, quant in combos:
-            row = [model, backend, quant]
-            for c in ctx_vals:
-                match = next(
-                    (r for r in results if r["model"] == model and r["backend"] == backend
-                     and r["quant"] == quant and r["ctx"] == c and r["out_len"] == 128), None
-                )
-                row.append(f"{match['tps']:.2f}" if match else "—")
-            ctx_rows.append(row)
-        sections.append("## Context Scaling — tok/s (out=128 fixed)\n\n" + md_table(ctx_hdrs, ctx_rows))
-    else:
-        sections.append("## Context Scaling\n\n*Only one context length measured.*\n")
-
-    # ── Output length scaling (ctx=512 fixed) ───────────────────────────────────
-    out_vals = sorted(set(r["out_len"] for r in results if r["ctx"] == 512))
-    if len(out_vals) > 1:
-        combos = sorted(set((r["model"], r["backend"], r["quant"]) for r in results if r["ctx"] == 512))
-        out_hdrs = ["Model", "Backend", "Quant"] + [f"out={o}" for o in out_vals]
-        out_rows = []
-        for model, backend, quant in combos:
-            row = [model, backend, quant]
-            for o in out_vals:
-                match = next(
-                    (r for r in results if r["model"] == model and r["backend"] == backend
-                     and r["quant"] == quant and r["ctx"] == 512 and r["out_len"] == o), None
-                )
-                row.append(f"{match['tps']:.2f}" if match else "—")
-            out_rows.append(row)
-        sections.append("## Output Length Scaling — tok/s (ctx=512 fixed)\n\n" + md_table(out_hdrs, out_rows))
-    else:
-        sections.append("## Output Length Scaling\n\n*Only one output length measured.*\n")
-
-    # ── tok/J efficiency ranking (ctx=512, out=128) ──────────────────────────────
-    eff = [r for r in primary if r["tok_per_j"] is not None]
-    eff.sort(key=lambda x: x["tok_per_j"], reverse=True)
-    if eff:
-        eff_rows = [
-            [str(i + 1), r["model"], r["backend"], r["quant"], f"{r['tps']:.2f}",
-             f"{avg_power:.1f}" if avg_power else "—", f"{r['tok_per_j']:.4f}"]
-            for i, r in enumerate(eff)
+    # Best tok/J per model
+    best = {}
+    for r in results:
+        m = r["model"]
+        if r["tok_j"] is not None:
+            if m not in best or r["tok_j"] > best[m]["tok_j"]:
+                best[m] = r
+    if best:
+        b_hdrs   = ["Model", "Best Tok/J", "Ctx", "Gen", "Tok/s", "Prefill W", "Decode W"]
+        b_aligns = ["left", "right", "right", "right", "right", "right", "right"]
+        b_rows   = [
+            [r["model"], fmt(r["tok_j"], ".4f"), r["ctx"], r["gen"],
+             fmt(r["tok_s"], ".2f"), fmt(r["prefill_pw"], ".2f"), fmt(r["decode_pw"], ".2f")]
+            for r in sorted(best.values(), key=lambda x: x["tok_j"], reverse=True)
         ]
-        eff_hdrs = ["Rank", "Model", "Backend", "Quant", "tok/s", "Avg W", "tok/J ↑"]
-        sections.append("## Efficiency Ranking — tok/J (ctx=512, out=128)\n\n" + md_table(eff_hdrs, eff_rows))
+        sections.append("## Best Tok/J per Model\n\n" + md_table(b_hdrs, b_rows, b_aligns))
+
+    # Thermal summary
+    if therm:
+        t_hdrs = ["Model", "Avg Power (W)", "Peak TJ (C)", "Throttled"]
+        t_rows = [
+            [m, fmt(v["avg_pw"], ".2f"), fmt(v["peak_tj"], ".1f"),
+             "YES" if v["throttled"] else "No"]
+            for m, v in sorted(therm.items())
+        ]
+        sections.append("## Thermal Summary\n\n" + md_table(t_hdrs, t_rows))
+
+    # Errors
+    errors = [r for r in results if r["errors"] > 0]
+    if errors:
+        e_hdrs = ["Model", "Ctx", "Gen", "Errors"]
+        e_rows = [[r["model"], r["ctx"], r["gen"], r["errors"]] for r in errors]
+        sections.append("## Failed Cells\n\n" + md_table(e_hdrs, e_rows))
     else:
-        sections.append("## Efficiency Ranking\n\n*Insufficient data (power readings or results missing).*\n")
+        sections.append("## Failed Cells\n\n*No failed cells.*\n")
 
-    # ── Failed runs ──────────────────────────────────────────────────────────────
-    if failures:
-        fail_rows = [[f["ts"], f["model"], f["backend"], f["reason"]] for f in failures]
-        sections.append("## Failed Runs\n\n" + md_table(["Timestamp", "Model", "Backend", "Reason"], fail_rows))
-    else:
-        sections.append("## Failed Runs\n\n*No failures recorded.*\n")
-
-    # ── Thermal summary ──────────────────────────────────────────────────────────
-    therm_rows = [
-        ["Avg power (after startup)", f"{avg_power:.2f} W" if avg_power else "—"],
-        ["Max TJ temp", f"{thermal['max_tj_c']:.1f} °C" if thermal["max_tj_c"] else "—"],
-        ["Throttled", "YES ⚠" if thermal["throttled"] else "No"],
-    ]
-    tlog_content = ""
-    tlog_path = os.path.join(base_dir, "thermal_summary.log")
-    if os.path.exists(tlog_path):
-        tlog_content = "\n```\n" + open(tlog_path).read() + "\n```\n"
-    sections.append("## Thermal Summary\n\n" + md_table(["Metric", "Value"], therm_rows) + tlog_content)
-
-    # ── Methodology ──────────────────────────────────────────────────────────────
-    ctx_list_str = ", ".join(str(c) for c in sorted(set(r["ctx"] for r in results))) or "—"
-    out_list_str = ", ".join(str(o) for o in sorted(set(r["out_len"] for r in results))) or "—"
+    # Methodology
     sections.append(
-        f"""## Methodology
-
-- **Device**: NVIDIA Jetson Orin Nano Super 8GB
-- **Clock locking**: `nvpmodel -m 0` + `jetson_clocks` (max performance mode)
-- **Concurrency**: 1 (single-user latency characterisation)
-- **Requests per cell**: {results[0]['path'] and '(see run config)' if results else '—'}
-- **Context sweep**: {ctx_list_str} tokens
-- **Output sweep**: {out_list_str} tokens
-- **Tool**: [aiperf](https://github.com/triton-inference-server/perf_analyzer) for both backends
-- **Thinking**: disabled (`think: false`) for all models — non-thinking benchmark
-- **GPU**: mandatory for all models — any model not confirmed on GPU is excluded
-- **Quantization**: matched exactly between Ollama and llama.cpp (GGUF downloaded to match)
-- **Ollama streaming**: disabled for models with `think=false` (workaround for Ollama 0.24.0 bug)
-- **llama.cpp flags**: `--n-gpu-layers 999` (full GPU offload), `--ctx-size 8192`
-- **Power metric**: `VDD_CPU_GPU_CV` from tegrastats @ 500ms interval; startup TTFT dropped
-- **tok/J**: `output_token_throughput_per_user (avg) / avg_power_W`
-- **Random seed**: 42
-"""
+        "## Methodology\n\n"
+        "- **Power rail**: `VDD_CPU_GPU_CV` from tegrastats at 500ms interval\n"
+        "- **Phase separation**: exact per-request prefill/decode windows from `profile_export.jsonl` "
+        "(`request_start_ns`, `request_ack_ns`, `request_end_ns`)\n"
+        "- **Decode power**: median of tegrastats samples falling inside decode windows\n"
+        "- **Tok/J**: `OSL / (decode_power_W × p50_decode_s)` — output tokens per joule of decode energy\n"
+        "- **Prefill power**: median of tegrastats samples falling inside prefill windows\n"
+        "- **Fallback**: timeline reconstruction used if `profile_export.jsonl` is absent\n"
+        "- **Concurrency**: 1\n"
+        "- **Clock locking**: `jetson_clocks` (max clocks)\n"
     )
 
-    # Write output
+    out_path = os.path.join(base_dir, "RESULTS.md")
     with open(out_path, "w") as f:
         f.write("\n".join(sections))
 
     print(f"\nReport written: {out_path}")
+    print(f"  {len(results)} cells  |  {len(best)} models  |  {len(errors)} failed cells")
     return 0
 
 
