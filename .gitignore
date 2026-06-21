@@ -1,0 +1,30 @@
+# Vendored source trees (llama.cpp clone, blis, etc.)
+benchmark-mobile/llama.cpp/
+benchmark-mobile/blis/
+
+# Model weights
+*.gguf
+*.bin
+*.safetensors
+models/
+gguf-models/
+
+# Benchmark artifacts (powermetrics logs, RSS logs, aiperf results)
+artifacts/
+**/artifacts/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# macOS
+.DS_Store
+
+# Temp files written by benchmark script
+/tmp/
+*.pidfile
+powermetrics.log
+rss.log
