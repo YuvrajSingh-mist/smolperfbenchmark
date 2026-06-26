@@ -16,10 +16,9 @@ Published report: [benchmark_report.md](./benchmark_report.md)
 - [Models](#models)
 - [Metrics](#metrics)
 - [Prerequisites](#prerequisites)
-- [Installation](#installation)
 - [Running Benchmarks](#running-benchmarks)
 - [Output](#output)
-- [Generating Charts and Reports](#generating-charts-and-reports)
+- [Generating Charts](#generating-charts)
 - [Arguments](#arguments)
 
 
@@ -195,6 +194,19 @@ artifacts/blog-all-YYYYMMDD-HHMM-<mode>/
 ```
 
 
+
+## Generating Charts
+
+After benchmarks complete, generate the report charts:
+
+```bash
+python3 generate_combined_charts.py       # main charts (Figures 1-17)
+python3 generate_appendix_ab_charts.py    # Appendix A (4-mode) + B (thermal)
+```
+
+Charts are saved to `artifacts/charts/`. The report is `benchmark_report.md`.
+
+> Raw per-cell data is on Hugging Face — see dataset table at the top of `benchmark_report.md`. Local artifact directories can be deleted after charts are generated.
 
 ## Arguments
 
