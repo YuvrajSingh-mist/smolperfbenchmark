@@ -13,11 +13,57 @@
 #   bash bench-non-reasoning.sh --only smollm2
 #   bash bench-non-reasoning.sh --skip-smoke
 #   bash bench-non-reasoning.sh --dry-run
-#   bash bench-non-reasoning.sh --resume DIR             # resume: skips cells with >=18/20 valid requests;
-#                                                        #   reruns timed-out/errored cells even if the file exists
+#   bash bench-non-reasoning.sh --resume DIR
 #   bash bench-non-reasoning.sh --power-mode 1          # 0=15W 1=25W 2=MAXN 3=7W
 
 set -euo pipefail
+
+# Pip installs user-local binaries here; add unconditeveryhionally so all sub-shells see it
+export PATH="$HOME/.local/bin:$PATH"
+
+# ── Ensure tmux is installed ──────────────────────────────────────────────────
+if ! command -v tmux &>/dev/null; then
+    echo "tmux not found — installing..."
+    sudo apt-get update -qq && sudo apt-get install -y tmux
+fi
+
+# ── Ensure Hugging Face CLI is installed ──────────────────────────────────────
+if ! command -v hf &>/dev/null; then
+    echo "Hugging Face CLI (hf) not found — installing..."
+
+    # Try system package first (Debian 13 Trixie / PEP 668 compatible)
+    if command -v apt-get &>/dev/null; then
+        echo "Attempting system package install..."
+        sudo apt-get update -qq && sudo apt-get install -y python3-huggingface-hub 2>/dev/null || true
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+
+    # If still not found, use pip with appropriate flags
+    if ! command -v hf &>/dev/null; then
+        echo "System package not available, using pip..."
+        if command -v pip3 &>/dev/null; then
+            PIP_CMD="pip3"
+        elif command -v pip &>/dev/null; then
+            PIP_CMD="pip"
+        else
+            echo "ERROR: Neither pip3 nor pip found. Install with:"
+            echo "  sudo apt-get install -y python3-pip"
+            exit 1
+        fi
+        # Debian 13 Trixie requires --break-system-packages for global install
+        $PIP_CMD install --break-system-packages -U "huggingface_hub[cli]" || \
+        $PIP_CMD install --user -U "huggingface_hub[cli]"
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+
+    # Final verification
+    if ! command -v hf &>/dev/null; then
+        echo "ERROR: hf command still not available after install attempts."
+        echo "Try manually: pip3 install --break-system-packages 'huggingface_hub[cli]'"
+        exit 1
+    fi
+    echo "Hugging Face CLI installed successfully."
+fi
 
 # ── Auto-relaunch inside tmux if not already there ────────────────────────────
 if [ -z "${TMUX:-}" ]; then
@@ -31,8 +77,6 @@ if [ -z "${TMUX:-}" ]; then
 fi
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 BACKEND="llamacpp"    # llamacpp | ollama | both
 REQS=20
 ONLY_MODEL=""
@@ -41,6 +85,7 @@ DRY_RUN=0
 RESUME_DIR=""
 POWER_MODE=0
 POWER_MODE_NAME="15w"
+POWER_MODE_EXPLICIT=0
 CONCURRENCY=1
 SLICE_DURATION=30
 RANDOM_SEED=42
@@ -60,15 +105,16 @@ OLLAMA_PORT=11434
 
 GGUF_DIR="$HOME/gguf-models"
 TEGRA_PIDFILE="/tmp/blog_bench_tegrastats.pid"
+COMBO_TEGRA_PIDFILE="/tmp/blog_bench_combo_tegrastats.pid"
 SERVER_PIDFILE="/tmp/blog_bench_server.pid"
-REPORT_PY="/tmp/blog_report.py"
+REPORT_PY="/tmp/blog_report_v2.py"
 
 # ── Model table: name|quant|gguf_path|tokenizer|ctx_size ─────────────────────
 declare -a MODELS=(
     "smollm2-135m|Q4_K_M|$GGUF_DIR/smollm2-135mq4_k_m.gguf|HuggingFaceTB/SmolLM2-135M-Instruct|2560"
     "smollm2-360m|Q8_0|$GGUF_DIR/smollm2-360mq8_0|HuggingFaceTB/SmolLM2-360M-Instruct|2560"
     "qwen2.5-0.5b|Q4_K_M|$GGUF_DIR/qwen2-5-0-5bq4_k_m|Qwen/Qwen2.5-0.5B-Instruct|2560"
-    "qwen3-0.6b|Q8_0|$GGUF_DIR/qwen3-0-6bq8_0|Qwen/Qwen3-0.6B|2560"
+    "qwen3-0.6b|Q8_0|$GGUF_DIR/Qwen3-0.6B-Q8_0.gguf|Qwen/Qwen3-0.6B|2560"
     "llama3.2-1b|Q4_K_M|$GGUF_DIR/llama3-2-1bq4_k_m.gguf|meta-llama/Llama-3.2-1B-Instruct|2560"
     "gemma3-1b|Q4_K_M|$GGUF_DIR/gemma3-1b-q4_k_m.gguf|google/gemma-3-1b-it|2560"
 "lfm2.5-350m|Q4_K_M|$GGUF_DIR/lfm2.5-350m-q4_k_m.gguf|LiquidAI/LFM2.5-350M|2560"
@@ -80,7 +126,7 @@ declare -A GGUF_SOURCES=(
     ["smollm2-135mq4_k_m.gguf"]="bartowski/SmolLM2-135M-Instruct-GGUF SmolLM2-135M-Instruct-Q4_K_M.gguf"
     ["smollm2-360mq8_0"]="bartowski/SmolLM2-360M-Instruct-GGUF SmolLM2-360M-Instruct-Q8_0.gguf"
     ["qwen2-5-0-5bq4_k_m"]="Qwen/Qwen2.5-0.5B-Instruct-GGUF qwen2.5-0.5b-instruct-q4_k_m.gguf"
-    ["qwen3-0-6bq8_0"]="Qwen/Qwen3-0.6B-GGUF qwen3-0.6b-q8_0.gguf"
+    ["Qwen3-0.6B-Q8_0.gguf"]="Qwen/Qwen3-0.6B-GGUF Qwen3-0.6B-Q8_0.gguf"
     ["llama3-2-1bq4_k_m.gguf"]="bartowski/Llama-3.2-1B-Instruct-GGUF Llama-3.2-1B-Instruct-Q4_K_M.gguf"
     ["gemma3-1b-q4_k_m.gguf"]="lmstudio-community/gemma-3-1b-it-GGUF gemma-3-1b-it-Q4_K_M.gguf"
 ["lfm2.5-350m-q4_k_m.gguf"]="LiquidAI/LFM2.5-350M-GGUF LFM2.5-350M-Q4_K_M.gguf"
@@ -131,8 +177,8 @@ while [[ $# -gt 0 ]]; do
         --skip-smoke)  SKIP_SMOKE=1;      shift ;;
         --dry-run)     DRY_RUN=1;         shift ;;
         --resume)      RESUME_DIR="$2";   shift 2 ;;
-        --maxn)        POWER_MODE=2; POWER_MODE_NAME="maxn"; shift ;;
-        --power-mode)  POWER_MODE="$2"
+        --maxn)        POWER_MODE=2; POWER_MODE_NAME="maxn"; POWER_MODE_EXPLICIT=1; shift ;;
+        --power-mode)  POWER_MODE="$2"; POWER_MODE_EXPLICIT=1
                        case "$POWER_MODE" in
                            0) POWER_MODE_NAME="15w"  ;;
                            1) POWER_MODE_NAME="25w"  ;;
@@ -147,17 +193,16 @@ done
 
 [[ "$BACKEND" =~ ^(llamacpp|ollama|both)$ ]] || { echo "ERROR: --backend must be llamacpp|ollama|both"; exit 1; }
 
-# ── Resolve artifact dir ──────────────────────────────────────────────────────
-if [ -n "$RESUME_DIR" ]; then
-    [ ! -d "$RESUME_DIR" ] && echo "ERROR: --resume dir not found: $RESUME_DIR" && exit 1
-    BASE_ARTIFACT="$RESUME_DIR"
-    echo "  [RESUME] Reusing artifact dir: $BASE_ARTIFACT"
+# ── Sweep setup ───────────────────────────────────────────────────────────────
+SWEEP_DATE=$(date +%Y%m%d-%H%M)
+if [ -n "$RESUME_DIR" ] || [ "$POWER_MODE_EXPLICIT" = 1 ]; then
+    SWEEP_MODES=("$POWER_MODE")
+    SWEEP_NAMES=("$POWER_MODE_NAME")
 else
-    BASE_ARTIFACT="$SCRIPT_DIR/artifacts/blog-all-$(date +%Y%m%d-%H%M)-${POWER_MODE_NAME}"
+    SWEEP_MODES=(2 1 0 3)
+    SWEEP_NAMES=(maxn 25w 15w 7w)
 fi
-
-TEGRA_LOG="$BASE_ARTIFACT/tegrastats.log"
-TIMING_LOG="$BASE_ARTIFACT/model_timing.log"
+# BASE_ARTIFACT and TIMING_LOG are resolved per-mode inside the sweep loop
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 banner() { echo ""; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; echo "  $*"; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; }
@@ -166,7 +211,52 @@ log()    { echo "  [$(date +%H:%M:%S)] $*"; }
 stop_tegrastats() {
     [ -f "$TEGRA_PIDFILE" ] && sudo kill "$(cat "$TEGRA_PIDFILE")" 2>/dev/null || true
     rm -f "$TEGRA_PIDFILE"
+    [ -f "$COMBO_TEGRA_PIDFILE" ] && sudo kill "$(cat "$COMBO_TEGRA_PIDFILE")" 2>/dev/null || true
+    rm -f "$COMBO_TEGRA_PIDFILE"
     sudo pkill -f "tegrastats" 2>/dev/null || true
+}
+
+# Per-combo tegrastats: each aiperf run gets its own tegrastats.log in its artifact dir.
+# This makes resume safe — done combos keep their power data, new combos get fresh captures.
+start_combo_tegrastats() {
+    local artifact_dir="$1"
+    [ -f "$COMBO_TEGRA_PIDFILE" ] && sudo kill "$(cat "$COMBO_TEGRA_PIDFILE")" 2>/dev/null || true
+    rm -f "$COMBO_TEGRA_PIDFILE"
+    [ "$DRY_RUN" = 1 ] && return
+    sudo tegrastats --interval 500 --logfile "$artifact_dir/tegrastats.log" &
+    echo $! > "$COMBO_TEGRA_PIDFILE"
+}
+
+stop_combo_tegrastats() {
+    [ -f "$COMBO_TEGRA_PIDFILE" ] && sudo kill "$(cat "$COMBO_TEGRA_PIDFILE")" 2>/dev/null || true
+    rm -f "$COMBO_TEGRA_PIDFILE"
+}
+
+restart_ollama() {
+    local model_tag="${1:-}"
+    log "  [!] Attempting Ollama restart..."
+    sudo systemctl restart ollama 2>/dev/null || \
+        { pkill -f "ollama serve" 2>/dev/null; sleep 2; OLLAMA_HOST=0.0.0.0 ollama serve &>/dev/null & }
+    sleep 5
+    echo 3 | sudo tee /proc/sys/vm/drop_caches    > /dev/null 2>&1 || true
+    echo 1 | sudo tee /proc/sys/vm/compact_memory > /dev/null 2>&1 || true
+    sleep 3
+    local elapsed=0
+    while [ "$elapsed" -lt 60 ]; do
+        local code
+        code=$(curl -s "http://localhost:$OLLAMA_PORT/api/tags" --max-time 3 \
+               -o /dev/null -w "%{http_code}" 2>/dev/null || true)
+        [ "$code" = "200" ] && log "  [OK] Ollama restarted at t=${elapsed}s" && break
+        sleep 2; elapsed=$((elapsed + 2))
+    done
+    [ "$elapsed" -ge 60 ] && { log "  [FAIL] Ollama did not come back within 60s"; return 1; }
+    if [ -n "$model_tag" ]; then
+        log "  Re-warming $model_tag..."
+        curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
+            -d "{\"model\":\"$model_tag\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" \
+            --max-time 120 -o /dev/null 2>/dev/null || true
+    fi
+    return 0
 }
 
 kill_llamacpp() {
@@ -406,15 +496,16 @@ echo "  Backend   : $BACKEND"
 echo "  Requests  : $REQS per run"
 echo "  Prompts   : ${PROMPT_LENGTHS[*]}"
 echo "  Gen lens  : ${GEN_LENGTHS[*]}"
-echo "  Artifacts : $BASE_ARTIFACT"
-echo "  Power     : mode $POWER_MODE ($POWER_MODE_NAME)"
+if [ "${#SWEEP_MODES[@]}" -gt 1 ]; then
+    echo "  Power     : sweep ${SWEEP_NAMES[*]}"
+else
+    echo "  Power     : mode ${SWEEP_MODES[0]} (${SWEEP_NAMES[0]})"
+fi
 [ -n "$ONLY_MODEL" ] && echo "  Filter    : $ONLY_MODEL"
 [ "$DRY_RUN"   = 1 ] && echo "  Mode      : DRY RUN"
-[ -n "$RESUME_DIR" ] && echo "  Mode      : RESUME"
+[ -n "$RESUME_DIR" ] && echo "  Mode      : RESUME ($RESUME_DIR)"
 
-mkdir -p "$BASE_ARTIFACT"
-
-# ── Initial cleanup ───────────────────────────────────────────────────────────
+# ── Initial cleanup (once) ────────────────────────────────────────────────────
 banner "Cleanup"
 pkill -f "llama-server.*$LLAMACPP_PORT" 2>/dev/null && log "killed llama-server" || true
 sudo pkill -f "tegrastats" 2>/dev/null && log "killed tegrastats" || true
@@ -436,72 +527,19 @@ for local_name in "${!GGUF_SOURCES[@]}"; do
     read -r hf_repo hf_file <<< "${GGUF_SOURCES[$local_name]}"
     log "  [DL]   $local_name  ←  $hf_repo / $hf_file"
     tmp_path="$GGUF_DIR/${hf_file}"
-    if hf download "$hf_repo" "$hf_file" --local-dir "$GGUF_DIR" 2>&1 | tail -3; then
+    if hf download "$hf_repo" "$hf_file" --local-dir "$GGUF_DIR"; then
         [ -f "$tmp_path" ] && mv "$tmp_path" "$local_path" && log "  [DONE] $local_name"
     else
         log "  [FAIL] Could not download $local_name — model will be skipped"
     fi
 done
 
-# ── Power mode + clock lock ───────────────────────────────────────────────────
-if [ "$DRY_RUN" = 0 ]; then
-    banner "Power mode + clock lock  ($POWER_MODE_NAME / nvpmodel -m $POWER_MODE)"
-    nvp_out="" nvp_exit=0
-    nvp_out=$(sudo nvpmodel -m "$POWER_MODE" 2>&1) && nvp_exit=0 || nvp_exit=$?
-    if [ "$nvp_exit" = 0 ]; then
-        log "nvpmodel -m $POWER_MODE ($POWER_MODE_NAME) OK"
-    elif echo "$nvp_out" | grep -qi "reboot"; then
-        log "ERROR: nvpmodel -m $POWER_MODE requires a reboot — cannot proceed at wrong power mode."
-        log "  Run: sudo nvpmodel -m $POWER_MODE && sudo reboot"
-        log "  Then re-run with --resume if needed."
-        stop_tegrastats; deactivate 2>/dev/null || true; exit 1
-    else
-        log "nvpmodel not available — continuing with current mode"
-    fi
-    sudo jetson_clocks       2>/dev/null && log "jetson_clocks OK"       || log "jetson_clocks not available"
-    sudo jetson_clocks --fan 2>/dev/null && log "jetson_clocks --fan OK" || log "fan control not available"
-    # Verify active mode matches requested mode
-    active_mode=""
-    active_mode=$(sudo nvpmodel -q 2>/dev/null | head -1 || echo "unknown")
-    log "Active: $active_mode"
-    if ! echo "$active_mode" | grep -qi "${POWER_MODE_NAME}"; then
-        log "WARNING: active mode ($active_mode) may not match requested $POWER_MODE_NAME — check before trusting results."
-    fi
-fi
-
-# ── Activate aiperf venv ──────────────────────────────────────────────────────
+# ── Activate aiperf venv (once) ──────────────────────────────────────────────
 source "$HOME/venv/bin/activate" 2>/dev/null || \
 source "$HOME/aiperf-env/bin/activate" 2>/dev/null || \
 { echo "ERROR: no aiperf venv found (~venv or ~aiperf-env)"; exit 1; }
 
-# ── Start tegrastats ──────────────────────────────────────────────────────────
-if [ "$DRY_RUN" = 0 ]; then
-    banner "Start tegrastats"
-    stop_tegrastats
-    sudo tegrastats --interval 500 --logfile "$TEGRA_LOG" &
-    echo $! > "$TEGRA_PIDFILE"
-    log "tegrastats PID $(cat "$TEGRA_PIDFILE")"
-fi
-
-declare -a SKIPPED_MODELS=() BENCH_MODELS=()
-
-# Returns 0 (true) if a cell JSON exists AND has >= 18/20 successful requests.
-# Returns 1 if the file is missing, empty, or had too many timeouts/errors.
-cell_valid() {
-    local f="$1"
-    [ -f "$f" ] || return 1
-    python3 - "$f" <<'PYEOF'
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    rc = d.get("request_count", {})
-    cnt = rc.get("avg", 0) if isinstance(rc, dict) else float(rc or 0)
-    errs = sum(e.get("count", 0) for e in d.get("error_summary", []))
-    sys.exit(0 if cnt >= 18 and errs <= 2 else 1)
-except Exception:
-    sys.exit(1)
-PYEOF
-}
+declare -a SKIPPED_MODELS BENCH_MODELS
 
 # ══════════════════════════════════════════════════════════════════════════════
 # BACKEND: llama.cpp
@@ -520,12 +558,12 @@ run_llamacpp() {
         [[ -n "$ONLY_MODEL" && "${MODEL_NAME,,}" != *"${ONLY_MODEL,,}"* ]] && continue
         [ "$DRY_RUN" = 1 ] && { log "[DRY RUN] llamacpp: $MODEL_NAME  path=$([ -f "$MODEL_PATH" ] && echo OK || echo MISSING)"; continue; }
 
-        # Resume: skip if all combos already done with valid data
+        # Resume: skip if all combos already done
         local missing=0
         for G in "${GEN_LENGTHS[@]}"; do
             for P in "${PROMPT_LENGTHS[@]}"; do
-                cell_valid "$BASE_ARTIFACT/llamacpp/$MODEL_NAME/gen${G}/ctx${P}/profile_export_aiperf.json" \
-                    || missing=$((missing + 1))
+                [ ! -f "$BASE_ARTIFACT/llamacpp/$MODEL_NAME/gen${G}/ctx${P}/profile_export_aiperf.json" ] && \
+                    missing=$((missing + 1))
             done
         done
         if [ "$missing" = 0 ]; then
@@ -591,7 +629,6 @@ run_llamacpp() {
         fi
 
         BENCH_MODELS+=("llamacpp:$i")
-        echo "MODEL_START:llamacpp:${MODEL_NAME}:${MODEL_QUANT}:$(date +%s)" >> "$TIMING_LOG"
 
         local RUN_NUM=0
         local TOTAL_RUNS=$(( ${#GEN_LENGTHS[@]} * ${#PROMPT_LENGTHS[@]} ))
@@ -600,14 +637,19 @@ run_llamacpp() {
                 RUN_NUM=$((RUN_NUM + 1))
                 local ARTIFACT_DIR="$BASE_ARTIFACT/llamacpp/$MODEL_NAME/gen${GEN}/ctx${CTX}"
                 mkdir -p "$ARTIFACT_DIR"
-                cell_valid "$ARTIFACT_DIR/profile_export_aiperf.json" && \
+                [ -f "$ARTIFACT_DIR/profile_export_aiperf.json" ] && \
                     { log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX gen=$GEN  [RESUME SKIP]"; continue; }
                 log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX  gen=$GEN  reqs=$REQS"
                 if ! ensure_llamacpp_alive "$MODEL_PATH" "$MODEL_CTX_SIZE" "$SERVER_LOG"; then
                     log "  [ABORT] Cannot recover server"
                     SKIPPED_MODELS+=("llamacpp:$MODEL_NAME (server unrecoverable at gen=$GEN ctx=$CTX)")
+                    stop_combo_tegrastats
                     break 2
                 fi
+                # Write combo metadata so report.py can read quant without timing_log
+                printf '{"model":"%s","quant":"%s","backend":"llamacpp","gen":%d,"ctx":%d}\n' \
+                    "$MODEL_NAME" "$MODEL_QUANT" "$GEN" "$CTX" > "$ARTIFACT_DIR/combo_info.json"
+                start_combo_tegrastats "$ARTIFACT_DIR"
                 aiperf profile \
                     --model                         "$MODEL_NAME" \
                     --streaming \
@@ -624,11 +666,11 @@ run_llamacpp() {
                     --request-timeout-seconds       "$REQUEST_TIMEOUT" \
                     --artifact-dir                  "$ARTIFACT_DIR" \
                     || log "  aiperf failed (ctx=$CTX gen=$GEN)"
+                stop_combo_tegrastats
                 [ "$RUN_NUM" -lt "$TOTAL_RUNS" ] && { log "  Cooldown ${COOLDOWN_COMBO}s..."; sleep "$COOLDOWN_COMBO"; }
             done
         done
 
-        echo "MODEL_END:llamacpp:${MODEL_NAME}:${MODEL_QUANT}:$(date +%s)" >> "$TIMING_LOG"
         kill_llamacpp
         log "Cooling ${COOLDOWN_MODEL}s..."
         sleep "$COOLDOWN_MODEL"
@@ -682,12 +724,12 @@ run_ollama() {
 
         [ "$DRY_RUN" = 1 ] && { log "[DRY RUN] ollama: $MODEL_NAME  template=$tmpl_type"; continue; }
 
-        # Resume: skip if all combos already done with valid data
+        # Resume: skip if all combos already done
         local missing=0
         for G in "${GEN_LENGTHS[@]}"; do
             for P in "${PROMPT_LENGTHS[@]}"; do
-                cell_valid "$BASE_ARTIFACT/ollama/$MODEL_NAME/gen${G}/ctx${P}/profile_export_aiperf.json" \
-                    || missing=$((missing + 1))
+                [ ! -f "$BASE_ARTIFACT/ollama/$MODEL_NAME/gen${G}/ctx${P}/profile_export_aiperf.json" ] && \
+                    missing=$((missing + 1))
             done
         done
         if [ "$missing" = 0 ]; then
@@ -721,16 +763,26 @@ run_ollama() {
             log "  [SMOKE SKIP]"
         else
             if ! smoke_test "http://localhost:$OLLAMA_PORT" "$model_tag"; then
-                log "  [SMOKE FAIL] $MODEL_NAME — skipping"
-                SKIPPED_MODELS+=("ollama:$MODEL_NAME (smoke failed)")
+                log "  [SMOKE FAIL] $MODEL_NAME — dropping caches and retrying once..."
                 ollama stop "$model_tag" 2>/dev/null || true
-                sleep 5; continue
+                sleep 5
+                echo 3 | sudo tee /proc/sys/vm/drop_caches    > /dev/null 2>&1 || true
+                echo 1 | sudo tee /proc/sys/vm/compact_memory > /dev/null 2>&1 || true
+                sleep 5
+                curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
+                    -d "{\"model\":\"$model_tag\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" \
+                    --max-time 120 -o /dev/null 2>/dev/null || true
+                if ! smoke_test "http://localhost:$OLLAMA_PORT" "$model_tag"; then
+                    log "  [SMOKE FAIL x2] $MODEL_NAME — skipping"
+                    SKIPPED_MODELS+=("ollama:$MODEL_NAME (smoke failed x2)")
+                    ollama stop "$model_tag" 2>/dev/null || true
+                    sleep 5; continue
+                fi
             fi
             log "  [SMOKE PASS]"
         fi
 
         BENCH_MODELS+=("ollama:$i")
-        echo "MODEL_START:ollama:${MODEL_NAME}:${MODEL_QUANT}:$(date +%s)" >> "$TIMING_LOG"
 
         local RUN_NUM=0
         local TOTAL_RUNS=$(( ${#GEN_LENGTHS[@]} * ${#PROMPT_LENGTHS[@]} ))
@@ -739,20 +791,29 @@ run_ollama() {
                 RUN_NUM=$((RUN_NUM + 1))
                 local ARTIFACT_DIR="$BASE_ARTIFACT/ollama/$MODEL_NAME/gen${GEN}/ctx${CTX}"
                 mkdir -p "$ARTIFACT_DIR"
-                cell_valid "$ARTIFACT_DIR/profile_export_aiperf.json" && \
+                [ -f "$ARTIFACT_DIR/profile_export_aiperf.json" ] && \
                     { log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX gen=$GEN  [RESUME SKIP]"; continue; }
                 log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX  gen=$GEN  reqs=$REQS"
 
-                # Verify Ollama is still alive
+                # Verify Ollama is still alive; attempt restart if not
                 local code
                 code=$(curl -s "http://localhost:$OLLAMA_PORT/api/tags" --max-time 5 \
                        -o /dev/null -w "%{http_code}" 2>/dev/null || true)
                 if [ "$code" != "200" ]; then
-                    log "  [!] Ollama not responding — aborting"
-                    SKIPPED_MODELS+=("ollama:$MODEL_NAME (ollama died at gen=$GEN ctx=$CTX)")
-                    break 2
+                    log "  [!] Ollama not responding at gen=$GEN ctx=$CTX"
+                    stop_combo_tegrastats
+                    if ! restart_ollama "$model_tag"; then
+                        log "  [ABORT] Ollama unrecoverable — skipping remaining combos"
+                        SKIPPED_MODELS+=("ollama:$MODEL_NAME (ollama died at gen=$GEN ctx=$CTX, restart failed)")
+                        break 2
+                    fi
+                    log "  [RECOVERED] Continuing from gen=$GEN ctx=$CTX"
                 fi
 
+                # Write combo metadata so report.py can read quant without timing_log
+                printf '{"model":"%s","quant":"%s","backend":"ollama","gen":%d,"ctx":%d}\n' \
+                    "$MODEL_NAME" "$MODEL_QUANT" "$GEN" "$CTX" > "$ARTIFACT_DIR/combo_info.json"
+                start_combo_tegrastats "$ARTIFACT_DIR"
                 aiperf profile \
                     --model                         "$model_tag" \
                     --streaming \
@@ -768,12 +829,12 @@ run_ollama() {
                     --random-seed                   "$RANDOM_SEED" \
                     --request-timeout-seconds       "$REQUEST_TIMEOUT" \
                     --artifact-dir                  "$ARTIFACT_DIR" \
+                    --use-legacy-max-tokens \
                     || log "  aiperf failed (ctx=$CTX gen=$GEN)"
+                stop_combo_tegrastats
                 [ "$RUN_NUM" -lt "$TOTAL_RUNS" ] && { log "  Cooldown ${COOLDOWN_COMBO}s..."; sleep "$COOLDOWN_COMBO"; }
             done
         done
-
-        echo "MODEL_END:ollama:${MODEL_NAME}:${MODEL_QUANT}:$(date +%s)" >> "$TIMING_LOG"
         log "Unloading $model_tag from GPU..."
         # OLLAMA_KEEP_ALIVE=0 ensures model is immediately evicted from GPU memory
         curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
@@ -785,100 +846,118 @@ run_ollama() {
     done
 }
 
-# ── Run backends ──────────────────────────────────────────────────────────────
-banner "Running benchmarks (backend=$BACKEND)"
+# ══════════════════════════════════════════════════════════════════════════════
+# POWER MODE SWEEP: MAXN → 25W → 15W → 7W
+# ══════════════════════════════════════════════════════════════════════════════
+for _sweep_idx in "${!SWEEP_MODES[@]}"; do
+    POWER_MODE="${SWEEP_MODES[$_sweep_idx]}"
+    POWER_MODE_NAME="${SWEEP_NAMES[$_sweep_idx]}"
 
-case "$BACKEND" in
-    llamacpp) run_llamacpp ;;
-    ollama)   run_ollama ;;
-    both)
-        run_llamacpp
-        log "Backend cooldown ${COOLDOWN_BACKEND}s before Ollama..."
-        sleep "$COOLDOWN_BACKEND"
-        run_ollama
-        ;;
-esac
+    if [ -n "$RESUME_DIR" ]; then
+        BASE_ARTIFACT="$RESUME_DIR"
+    else
+        BASE_ARTIFACT="$HOME/Desktop/benchmark/smolbenchmark/non-reasoning-models/artifacts/blog-all-${SWEEP_DATE}-${POWER_MODE_NAME}"
+    fi
+    TIMING_LOG="$BASE_ARTIFACT/model_timing.log"
+    mkdir -p "$BASE_ARTIFACT"
 
-deactivate 2>/dev/null || true
+    SKIPPED_MODELS=()
+    BENCH_MODELS=()
 
-# ── Stop tegrastats ───────────────────────────────────────────────────────────
-if [ "$DRY_RUN" = 0 ]; then
-    banner "Stop tegrastats"
-    stop_tegrastats
-fi
+    banner "Power mode $(( _sweep_idx + 1 ))/${#SWEEP_MODES[@]}: $POWER_MODE_NAME  →  $BASE_ARTIFACT"
 
-[ "$DRY_RUN" = 1 ] && banner "Dry run complete" && exit 0
-[ "${#BENCH_MODELS[@]}" = 0 ] && echo "  No models benchmarked." && exit 1
+    # ── Power mode + clock lock ───────────────────────────────────────────────
+    if [ "$DRY_RUN" = 0 ]; then
+        log "Setting nvpmodel -m $POWER_MODE ($POWER_MODE_NAME)..."
+        current_mode_id=$(sudo nvpmodel -q 2>/dev/null | awk 'NR==2{print $1}' || echo "-1")
+        if [ "$current_mode_id" = "$POWER_MODE" ]; then
+            log "Already at mode $POWER_MODE ($POWER_MODE_NAME) — skipping nvpmodel"
+        else
+            nvp_out=$(echo "yes" | sudo nvpmodel -m "$POWER_MODE" 2>&1) && true || true
+            log "nvpmodel: $(echo "$nvp_out" | tr '\n' ' ')"
+            sleep 1
+        fi
+        active_mode=$(sudo nvpmodel -q 2>/dev/null | head -1 || echo "unknown")
+        log "Active power mode: $active_mode"
+        if ! echo "$active_mode" | grep -qi "${POWER_MODE_NAME}"; then
+            log "ERROR: active mode ($active_mode) does not match requested $POWER_MODE_NAME."
+            log "  The device may still need a reboot. Run:"
+            log "    echo yes | sudo nvpmodel -m $POWER_MODE && sudo reboot"
+            log "  Then re-run with:  bash bench-non-reasoning-models-v2.sh --power-mode $POWER_MODE --backend $BACKEND"
+            stop_combo_tegrastats; exit 1
+        fi
+        log "Power mode verified OK: $active_mode"
+        sudo jetson_clocks       2>/dev/null && log "jetson_clocks OK"       || log "jetson_clocks not available"
+        sudo jetson_clocks --fan 2>/dev/null && log "jetson_clocks --fan OK" || log "fan control not available"
+    fi
 
-# ── Generate report.md ────────────────────────────────────────────────────────
-banner "Generating report.md"
+    # ── Run backends ──────────────────────────────────────────────────────────
+    banner "Running benchmarks (backend=$BACKEND, power=$POWER_MODE_NAME)"
+
+    case "$BACKEND" in
+        llamacpp) run_llamacpp ;;
+        ollama)   run_ollama ;;
+        both)
+            run_llamacpp
+            log "Backend cooldown ${COOLDOWN_BACKEND}s before Ollama..."
+            sleep "$COOLDOWN_BACKEND"
+            run_ollama
+            ;;
+    esac
+
+    stop_combo_tegrastats  # safety: ensure no combo tegrastats left running
+
+    if [ "$DRY_RUN" = 1 ]; then
+        banner "Dry run complete ($POWER_MODE_NAME)"; continue
+    fi
+    if [ "${#BENCH_MODELS[@]}" = 0 ]; then
+        echo "  No models benchmarked for $POWER_MODE_NAME."; continue
+    fi
+
+    # ── Generate report.md ────────────────────────────────────────────────────
+    banner "Generating report.md ($POWER_MODE_NAME)"
 
 cat > "$REPORT_PY" << 'PYEOF'
 import re, sys, json, os, glob
 from datetime import datetime
 
-base_dir   = sys.argv[1]
-tegra_log  = sys.argv[2]
-timing_log = sys.argv[3]
-skipped_arg = sys.argv[4] if len(sys.argv) > 4 else ""
+base_dir    = sys.argv[1]
+skipped_arg = sys.argv[2] if len(sys.argv) > 2 else ""
 report_path = os.path.join(base_dir, "report.md")
 
 skipped = [s for s in skipped_arg.split("||") if s] if skipped_arg else []
 
-# ── Parse tegrastats ──────────────────────────────────────────────────────────
-samples = []
-try:
-    for line in open(tegra_log):
-        ts_m = re.match(r'(\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2})', line)
-        if not ts_m: continue
-        try: ts = datetime.strptime(ts_m.group(1), "%m-%d-%Y %H:%M:%S").timestamp()
-        except: continue
-        pw_m  = re.search(r'VDD_CPU_GPU_CV (\d+)mW', line)
-        cpu_m = re.search(r'cpu@([\d.]+)C', line)
-        gpu_m = re.search(r'gpu@([\d.]+)C', line)
-        tj_m  = re.search(r'tj@([\d.]+)C',  line)
-        if pw_m:
-            samples.append((ts, int(pw_m.group(1))/1000.0,
-                float(cpu_m.group(1)) if cpu_m else None,
-                float(gpu_m.group(1)) if gpu_m else None,
-                float(tj_m.group(1))  if tj_m  else None))
-except FileNotFoundError:
-    pass
+# ── Per-combo power: each combo has its own tegrastats.log in its artifact dir ─
+# Average all samples — no time-window slicing needed.
+def parse_combo_power(artifact_dir):
+    tlog = os.path.join(artifact_dir, "tegrastats.log")
+    pw, cpu, gpu, tj = [], [], [], []
+    try:
+        for line in open(tlog):
+            pw_m  = re.search(r'VDD_CPU_GPU_CV (\d+)mW', line)
+            cpu_m = re.search(r'cpu@([\d.]+)C', line)
+            gpu_m = re.search(r'gpu@([\d.]+)C', line)
+            tj_m  = re.search(r'tj@([\d.]+)C',  line)
+            if pw_m:
+                pw.append(int(pw_m.group(1)) / 1000.0)
+                if cpu_m: cpu.append(float(cpu_m.group(1)))
+                if gpu_m: gpu.append(float(gpu_m.group(1)))
+                if tj_m:  tj.append(float(tj_m.group(1)))
+    except FileNotFoundError:
+        return None, None, None, None
+    if not pw: return None, None, None, None
+    return (
+        sum(pw)  / len(pw),
+        sum(cpu) / len(cpu) if cpu else None,
+        sum(gpu) / len(gpu) if gpu else None,
+        max(tj)             if tj  else None,
+    )
 
-def power_in_window(t0, t1):
-    w = [s for s in samples if t0 <= s[0] <= t1]
-    if not w: return None, None, None, None
-    avg_pw = sum(s[1] for s in w) / len(w)
-    cpu_t  = [s[2] for s in w if s[2] is not None]
-    gpu_t  = [s[3] for s in w if s[3] is not None]
-    tj_t   = [s[4] for s in w if s[4] is not None]
-    return (avg_pw,
-            sum(cpu_t)/len(cpu_t) if cpu_t else None,
-            sum(gpu_t)/len(gpu_t) if gpu_t else None,
-            max(tj_t)             if tj_t  else None)
-
-# ── Parse timing log ──────────────────────────────────────────────────────────
-# FORMAT: MODEL_START:backend:name:quant:ts
-model_windows = {}
-model_quants  = {}
-try:
-    for line in open(timing_log):
-        line = line.strip()
-        if line.startswith("MODEL_START:"):
-            parts = line.split(":", 4)
-            if len(parts) == 5:
-                _, backend, name, quant, ts = parts
-                key = f"{backend}:{name}"
-                model_windows.setdefault(key, {})["start"] = float(ts)
-                model_quants[key] = quant
-        elif line.startswith("MODEL_END:"):
-            parts = line.split(":", 4)
-            if len(parts) == 5:
-                _, backend, name, _, ts = parts
-                key = f"{backend}:{name}"
-                model_windows.setdefault(key, {})["end"] = float(ts)
-except FileNotFoundError:
-    pass
+def get_combo_quant(artifact_dir):
+    try:
+        return json.load(open(os.path.join(artifact_dir, "combo_info.json"))).get("quant", "?")
+    except Exception:
+        return "?"
 
 # ── Discover result files ─────────────────────────────────────────────────────
 # Artifact structure: <base>/<backend>/<model>/gen<G>/ctx<C>/profile_export_aiperf.json
@@ -887,21 +966,20 @@ for json_path in sorted(glob.glob(f"{base_dir}/**/profile_export_aiperf.json", r
     rel   = os.path.relpath(json_path, base_dir)
     parts = rel.split(os.sep)
     if len(parts) < 5: continue
-    backend    = parts[0]  # llamacpp or ollama
+    backend    = parts[0]
     model_name = parts[1]
     gen = int(re.sub(r'\D', '', parts[2]))
     ctx = int(re.sub(r'\D', '', parts[3]))
+    artifact_dir = os.path.dirname(json_path)
     try: d = json.load(open(json_path))
     except: continue
     def g(key, stat="avg"): return (d.get(key, {}) or {}).get(stat)
-    win_key = f"{backend}:{model_name}"
-    win = model_windows.get(win_key, {})
-    avg_pw, avg_cpu, avg_gpu, peak_tj = power_in_window(win.get("start",0), win.get("end",9e18))
+    avg_pw, avg_cpu, avg_gpu, peak_tj = parse_combo_power(artifact_dir)
     tps = g("output_token_throughput_per_user")
     tok_j = (tps / avg_pw) if (tps and avg_pw) else None
     results.append({
         "backend": backend, "model": model_name,
-        "quant": model_quants.get(win_key, "?"),
+        "quant": get_combo_quant(artifact_dir),
         "prompt": ctx, "gen": gen,
         "isl": g("input_sequence_length"), "osl": g("output_sequence_length"),
         "osl_mis": g("osl_mismatch_diff_pct"),
@@ -927,11 +1005,26 @@ for json_path in sorted(glob.glob(f"{base_dir}/**/profile_export_aiperf.json", r
     })
 results.sort(key=lambda r: (r["backend"], r["model"], r["gen"], r["prompt"]))
 
+# ── Thermal summary: aggregate per-combo power across all combos per model ────
+thermal_acc = {}
+for r in results:
+    k = f"{r['backend']}:{r['model']}"
+    thermal_acc.setdefault(k, {"pw": [], "cpu": [], "gpu": [], "tj": []})
+    if r["power_w"]   is not None: thermal_acc[k]["pw"].append(r["power_w"])
+    if r["avg_cpu_c"] is not None: thermal_acc[k]["cpu"].append(r["avg_cpu_c"])
+    if r["avg_gpu_c"] is not None: thermal_acc[k]["gpu"].append(r["avg_gpu_c"])
+    if r["peak_tj_c"] is not None: thermal_acc[k]["tj"].append(r["peak_tj_c"])
+
 thermal = {}
-for key, win in model_windows.items():
-    avg_pw, avg_cpu, avg_gpu, peak_tj = power_in_window(win.get("start",0), win.get("end",9e18))
-    thermal[key] = {"avg_pw": avg_pw, "avg_cpu": avg_cpu, "avg_gpu": avg_gpu,
-                    "peak_tj": peak_tj, "throttled": peak_tj is not None and peak_tj > 85}
+for k, v in thermal_acc.items():
+    peak = max(v["tj"]) if v["tj"] else None
+    thermal[k] = {
+        "avg_pw":  sum(v["pw"])  / len(v["pw"])  if v["pw"]  else None,
+        "avg_cpu": sum(v["cpu"]) / len(v["cpu"]) if v["cpu"] else None,
+        "avg_gpu": sum(v["gpu"]) / len(v["gpu"]) if v["gpu"] else None,
+        "peak_tj": peak,
+        "throttled": peak is not None and peak > 85,
+    }
 
 best_tokj = {}
 for r in results:
@@ -1029,19 +1122,23 @@ print(f"\n  Report → {report_path}")
 print(f"  {len(results)} rows across {len(backends_present)} backend(s)")
 PYEOF
 
-SKIPPED_STR=""
-for s in "${SKIPPED_MODELS[@]}"; do SKIPPED_STR="${SKIPPED_STR}${s}||"; done
+    SKIPPED_STR=""
+    for s in "${SKIPPED_MODELS[@]}"; do SKIPPED_STR="${SKIPPED_STR}${s}||"; done
 
-python3 "$REPORT_PY" "$BASE_ARTIFACT" "$TEGRA_LOG" "$TIMING_LOG" "$SKIPPED_STR"
+    python3 "$REPORT_PY" "$BASE_ARTIFACT" "$SKIPPED_STR"
 
-banner "Done"
-echo "  Artifacts : $BASE_ARTIFACT"
-echo "  Report    : $BASE_ARTIFACT/report.md"
-echo ""
-echo "  Run again with Ollama:"
-echo "    bash bench-non-reasoning.sh --backend ollama --resume $BASE_ARTIFACT"
+    banner "Done — $POWER_MODE_NAME"
+    echo "  Artifacts : $BASE_ARTIFACT"
+    echo "  Report    : $BASE_ARTIFACT/report.md"
+    echo ""
+done
+
+deactivate 2>/dev/null || true
+
+banner "All power modes complete"
+echo "  Modes     : ${SWEEP_NAMES[*]}"
 echo ""
 echo "  Dashboard (optional):"
 echo "    source ~/venv/bin/activate"
-echo "    AIPERF_DASHBOARD_HOST=0.0.0.0 aiperf plot $BASE_ARTIFACT --dashboard --port 8050"
+echo "    AIPERF_DASHBOARD_HOST=0.0.0.0 aiperf plot <artifact_dir> --dashboard --port 8050"
 echo ""
