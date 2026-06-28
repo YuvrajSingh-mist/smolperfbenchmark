@@ -10,8 +10,11 @@ models/
 gguf-models/
 
 # Benchmark artifacts (powermetrics logs, RSS logs, aiperf results)
-artifacts/
-**/artifacts/
+# Ignore everything inside artifacts/ except charts/
+artifacts/*
+!artifacts/charts/
+**/artifacts/*
+!**/artifacts/charts/
 
 # Python
 venv/

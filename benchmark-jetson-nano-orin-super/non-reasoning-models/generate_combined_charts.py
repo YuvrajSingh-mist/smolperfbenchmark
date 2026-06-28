@@ -700,22 +700,21 @@ canonical_bar(CANONICAL_CTX, CANONICAL_GEN,
               fname_prefix="11_canonical_cell_comparison",
               title_suffix="  [canonical standard]")
 
-# 12. Energy: total_J vs gen at all modes, ctx=2048
-fig, ax = plt.subplots(figsize=(12, 6))
-sub2048 = df[df.prompt == CANONICAL_CTX]
+# 12. Energy: total_J vs gen at 25W, ctx=2048
+fig, ax = plt.subplots(figsize=(10, 6))
+sub25 = df[(df["mode"] == "25W") & (df.prompt == CANONICAL_CTX)]
 for model in MODELS:
-    s = sub2048[sub2048.model == model & sub2048["mode"].isin(modes_avail)].sort_values("gen") if False else \
-        sub2048[(sub2048.model == model)].sort_values("gen")
+    s = sub25[sub25.model == model].sort_values("gen")
     if s.empty or s["total_j"].dropna().empty:
         continue
     ax.plot(s.gen, s.total_j, marker="s", ls="--", lw=2,
             color=MODEL_PAL[model], label=MDL.get(model, model), ms=8)
-ax.set_title(f"Total Energy per Request vs Gen Length (ctx={CANONICAL_CTX})",
+ax.set_title(f"Total Energy per Request vs Gen Length (25W, ctx={CANONICAL_CTX})",
              fontweight="bold", fontsize=12)
 ax.set_xlabel("Gen length (tok)")
 ax.set_ylabel("Total energy (J)")
 ax.set_xticks(GEN_LENGTHS)
-ax.legend(fontsize=9, loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0)
+ax.legend(fontsize=9)
 plt.tight_layout()
 save(fig, "E_total_energy_vs_gen_length.png")
 

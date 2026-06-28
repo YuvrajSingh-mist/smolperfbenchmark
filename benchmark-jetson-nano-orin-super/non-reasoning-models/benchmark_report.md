@@ -68,6 +68,8 @@ Eight models were benchmarked across all four Jetson Orin Nano Super power modes
 
 **Backend finding: llama.cpp outperforms Ollama by 36-74 % on throughput** for sub-1B transformer models, with proportionally higher tok/J. Qwen3-0.6B and Llama3.2-1B are the exception - nearly identical across backends (~1-6 % difference at all four power modes). LFM2.5-350M suffers most under Ollama (3.35× slower than llama.cpp at 15W, 4.2× at 25W).
 
+> **GPU offloading verified:** Ollama loaded all models with **100 % GPU offload** (confirmed via `ollama ps`). No layers fell back to CPU. The performance gap is not caused by partial GPU offloading — it reflects differences in CUDA kernel efficiency and server overhead between the two backends at identical GPU utilisation.
+
 **Sub-1B standouts at 25W llama.cpp:**
 - **SmolLM2-135M** - **165.2 tok/s**, **29.6 output tok/J** (best in suite), 101 MB, ~5.6 W: runs on a USB-C power bank
 - **LFM2.5-350M** - **115.4 tok/s** in only 219 MB: competitive with SmolLM2-360M (369 MB) at 60 % of its size
@@ -485,6 +487,17 @@ Two complementary tok/J lenses on energy efficiency - see [I.6](#appendix-i6) fo
 See [Figure 5](#figure-5) (decode tok/J vs prompt length) and [Figure 6](#figure-6) (total tok/J vs prompt length) in section 2.2 - *25W leads at every model and prompt length*.
 
 
+<a id="figure-16"></a>
+**Figure 16: Total energy per request vs output length at 25W, ctx=2048**
+
+![Total energy vs output length at 25W](./artifacts/charts/E_total_energy_vs_gen_length.png)
+
+<a id="figure-17"></a>
+**Figure 17: Decode energy per output token in mJ (ctx=2048, gen=256)**
+
+![mJ per output token by mode](./artifacts/charts/E_mj_per_output_token.png)
+
+
 ### Key findings:
 
 1. **25W wins on both metrics for every model under llama.cpp** (corrected decode-phase [`tok/J`](#appendix-i3)). 25W [`decode tok/J`](#appendix-i6) (15.50 for SmolLM2-360M) consistently beats both 15W (14.71) and MAXN (12.64) across all models — see [Figure 5](#figure-5) (decode tok/J) and [Figure 6](#figure-6) (total tok/J).
@@ -496,15 +509,6 @@ See [Figure 5](#figure-5) (decode tok/J vs prompt length) and [Figure 6](#figure
 4. *Total tok/J* grows with *prompt length* because [`ISL`](#glossary) dominates ([`ISL`](#glossary)+[`OSL`](#glossary)) as ctx increases while [`total_J`](#glossary) grows more slowly (decode time is constant), see [D.3](#appendix-d3).
 5. Bigger models (>0.5B) decline in decode power compared to llama.cpp, thus lower tok/J.
 6. High power usage in ollama for all models across power modes except for LFM2.5-350M and LFM2.5-1.2B, which are more efficient than llama.cpp at 7W and 15W.
-<!-- <a id="figure-17"></a>
-**Figure 16: Total energy per request vs output length at 25W, ctx=2048**
-
-![Total energy vs output length at 25W](./artifacts/charts/E_total_energy_vs_gen_length.png)
-
-<a id="figure-18"></a>
-**Figure 17: Decode energy per output token in mJ (ctx=2048, gen=256)**
-
-![mJ per output token by mode](./artifats/charts/E_mj_per_output_token.png) -->
 
 
 ### The 25W Sweet Spot
@@ -559,7 +563,8 @@ At 15W, Ollama draws ~4-15 % less [`VDD_CPU_GPU_CV`](#glossary) than llama.cpp f
 | Throughput parity with easier deployment | **Ollama** | 25W | Qwen3-0.6B / Llama3.2-1B |
 | Power-constrained, single model | **llama.cpp** | 15W | SmolLM2-135M |
 
----
+> ⚠ **Version caveat:** All results are specific to the tested software versions — **llama.cpp build b9292** (commit `ef570f630`, CUDA backend) and **Ollama v0.24.0** (default GPU offload). Ollama v0.24.0 was the only latest supported version that loaded all GGUFs across all eight models without failures on JetPack R36.4.7. Ollama v0.24.0 vendors llama.cpp at commit `ec98e2002` (Dec 2025, ~5 months older than the standalone b9292 build). Newer releases of either backend may include CUDA kernel improvements, flash attention integration, or SSM/hybrid-architecture optimisations that could change the relative performance. In particular, Ollama's GGML CUDA backend for LFM2.5 models may improve in future versions. Re-benchmark before drawing conclusions about current versions.
+
 
 ## 5. Conclusion
 
