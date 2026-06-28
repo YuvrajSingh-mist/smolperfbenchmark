@@ -45,8 +45,6 @@ Eight models were benchmarked across all four Jetson Orin Nano Super power modes
 
 **Backend finding: llama.cpp outperforms Ollama by 36-74 % on throughput** for sub-1B transformer models, with proportionally higher tok/J. Qwen3-0.6B and Llama3.2-1B are the exception - nearly identical across backends (~1-6 % difference at all four power modes). LFM2.5-350M suffers most under Ollama (3.35× slower than llama.cpp at 15W, 4.2× at 25W).
 
-> **GPU offloading verified:** Ollama loaded all models with **100 % GPU offload** (confirmed via `ollama ps`). No layers fell back to CPU. The performance gap is not caused by partial GPU offloading — it reflects differences in CUDA kernel efficiency and server overhead between the two backends at identical GPU utilisation.
-
 **Sub-1B standouts at 25W llama.cpp:**
 - **SmolLM2-135M** - **165.2 tok/s**, **29.6 output tok/J** (best in suite), 101 MB, ~5.6 W: runs on a USB-C power bank
 - **LFM2.5-350M** - **115.4 tok/s** in only 219 MB: competitive with SmolLM2-360M (369 MB) at 60 % of its size
@@ -115,6 +113,8 @@ Eight models were benchmarked across all four Jetson Orin Nano Super power modes
 | Datasets | Synthetic prompts at exact token counts (128, 512, 1024, 2048) generated via aiperf |
 | Concurrency | **1 user, 1 request at a time** (`--parallel 1`, `--concurrency 1`) - single-user latency and throughput profile only |
 | Clock locking | `jetson_clocks` run after each `nvpmodel` switch (pins GPU + CPU at the mode's maximum frequency so DVFS cannot drop clocks between requests - [see I.13](#appendix-i13) for why this matters for reproducibility) |
+
+> ⚠ **Why Ollama v0.24.0 specifically:** Ollama v0.24.0 was the only latest supported version that loaded all GGUFs across all eight models without failures on JetPack R36.4.7. Newer Ollama releases (v0.30+) have regressions causing GGUF loading failures — `GGML_ASSERT` crashes on model load ([#16506](https://github.com/ollama/ollama/issues/16506), [#16147](https://github.com/ollama/ollama/issues/16147)), HuggingFace GGUF incompatibility ([#14575](https://github.com/ollama/ollama/issues/14575)), and architecture-specific load failures ([#16282](https://github.com/ollama/ollama/issues/16282), [#15369](https://github.com/ollama/ollama/issues/15369)). Multi-file GGUF import remains an open issue with 200+ reactions ([#5245](https://github.com/ollama/ollama/issues/5245)). Ollama v0.24.0 vendors llama.cpp at commit `ec98e2002` (Dec 2025, ~5 months older than the standalone b9292 build). All results are specific to these versions — re-benchmark before drawing conclusions about current releases.
 
 ### 1.3 Models Under Test
 
@@ -539,8 +539,6 @@ At 15W, Ollama draws ~4-15 % less [`VDD_CPU_GPU_CV`](#glossary) than llama.cpp f
 | Max throughput / efficiency, sub-1B | **llama.cpp** | 25W | SmolLM2-135M |
 | Throughput parity with easier deployment | **Ollama** | 25W | Qwen3-0.6B / Llama3.2-1B |
 | Power-constrained, single model | **llama.cpp** | 15W | SmolLM2-135M |
-
-> ⚠ **Version caveat:** All results are specific to the tested software versions — **llama.cpp build b9292** (commit `ef570f630`, CUDA backend) and **Ollama v0.24.0** (default GPU offload). Ollama v0.24.0 was the only latest supported version that loaded all GGUFs across all eight models without failures on JetPack R36.4.7. Ollama v0.24.0 vendors llama.cpp at commit `ec98e2002` (Dec 2025, ~5 months older than the standalone b9292 build). Newer releases of either backend may include CUDA kernel improvements, flash attention integration, or SSM/hybrid-architecture optimisations that could change the relative performance. In particular, Ollama's GGML CUDA backend for LFM2.5 models may improve in future versions. Re-benchmark before drawing conclusions about current versions.
 
 
 ## 5. Conclusion
