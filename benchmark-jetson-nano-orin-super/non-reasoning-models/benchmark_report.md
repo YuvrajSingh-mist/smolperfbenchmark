@@ -1,26 +1,3 @@
----
-title: 'Tiny LLM Benchmark: Jetson Orin Nano Super 8GB'
-date: 2026-05-29
-permalink: /posts/jetson-nano-super-benchmark-non-reasoning/
-author_profile: false
-excerpt: "8 tiny LLMs benchmarked across 4 power modes on Jetson Orin Nano Super 8GB with llama.cpp. 25W sweet spot: 43% more tok/s than 15W, better tok/J than MAXN."
-header:
-  image: /images/blogs/jetson-nano-super-benchmark/jetson-setup.jpg
-  teaser: /images/blogs/jetson-nano-super-benchmark/jetson-setup.jpg
-  og_image: https://www.smolhub.com/images/blogs/jetson-nano-super-benchmark/jetson-setup-og.jpg
-  og_image_width: 1200
-  og_image_height: 1855
-  og_image_alt: "Three Jetson Orin Nano Super 8GB boards used for the LLM inference benchmark"
-tags:
-  - Jetson
-  - Benchmark
-  - LLM Inference
-  - Edge AI
-  - llama.cpp
-  - CUDA
-  - Energy Efficiency
-  - NVIDIA Jetson
----
 
 ## Four Power Modes × Eight Models: llama.cpp vs Ollama
 
