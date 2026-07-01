@@ -114,7 +114,6 @@ Eight models were benchmarked across all four Jetson Orin Nano Super power modes
 | Concurrency | **1 user, 1 request at a time** (`--parallel 1`, `--concurrency 1`) - single-user latency and throughput profile only |
 | Clock locking | `jetson_clocks` run after each `nvpmodel` switch (pins GPU + CPU at the mode's maximum frequency so DVFS cannot drop clocks between requests - [see I.13](#appendix-i13) for why this matters for reproducibility) |
 
-> ⚠ **Why Ollama v0.24.0 specifically:** Ollama v0.24.0 was the only latest supported version that loaded all GGUFs across all eight models without failures on JetPack R36.4.7. Newer Ollama releases (v0.30+) have regressions causing GGUF loading failures — `GGML_ASSERT` crashes on model load ([#16506](https://github.com/ollama/ollama/issues/16506), [#16147](https://github.com/ollama/ollama/issues/16147)), HuggingFace GGUF incompatibility ([#14575](https://github.com/ollama/ollama/issues/14575)), and architecture-specific load failures ([#16282](https://github.com/ollama/ollama/issues/16282), [#15369](https://github.com/ollama/ollama/issues/15369)). Multi-file GGUF import remains an open issue with 200+ reactions ([#5245](https://github.com/ollama/ollama/issues/5245)). Ollama v0.24.0 vendors llama.cpp at commit `ec98e2002` (Dec 2025, ~5 months older than the standalone b9292 build). All results are specific to these versions — re-benchmark before drawing conclusions about current releases.
 
 ### 1.3 Models Under Test
 
