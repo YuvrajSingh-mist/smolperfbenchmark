@@ -1,35 +1,31 @@
 #!/bin/bash
-# bench-non-reasoning.sh — Blog benchmark: tiny LLMs on Jetson Orin Nano Super 8GB
+# benchmark-moe-rpc.sh — 3-node llama.cpp RPC cluster benchmark for MoE models
+# that don't fit on a single Jetson Orin Nano Super 8GB.
 #
-# Per model: ONE server launch → smoke → aiperf sweep.
-# Sweeps: prompt in {128,512,1024,2048} × gen in {64,128,256}
+# Head node (this box) pools memory with two RPC workers (jetson2, jetson3) over
+# the network via llama.cpp's --rpc backend. Per model: ONE server launch → smoke
+# → aiperf sweep. Sweeps: prompt in {128,512,1024,2048} × gen in {64,128,256}.
 # Key metric: output tok/J (output tokens per joule), from aiperf + tegrastats.
 #
 # Usage:
-#   bash bench-non-reasoning.sh                          # llamacpp only, all models
-#   bash bench-non-reasoning.sh --backend ollama         # ollama only
-#   bash bench-non-reasoning.sh --backend both           # llamacpp then ollama
-#   bash bench-non-reasoning.sh --reqs 5
-#   bash bench-non-reasoning.sh --only smollm2
-#   bash bench-non-reasoning.sh --skip-smoke
-#   bash bench-non-reasoning.sh --dry-run
-#   bash bench-non-reasoning.sh --resume DIR
-#   bash bench-non-reasoning.sh --power-mode 1          # 0=15W 1=25W 2=MAXN 3=7W
-#   bash bench-non-reasoning.sh --backend rpc           # 3-node llama.cpp RPC cluster:
-#                                                        #   gpt-oss-20b, Qwen3-30B-A3B, Granite4-32B-A9B
-#                                                        #   at Q4_K_M + Q8_0 (head=this box, workers=jetson2,jetson3)
-#   bash bench-non-reasoning.sh --backend rpc --power-mode 1 --only gpt-oss
+#   bash benchmark-moe-rpc.sh --power-mode 1          # 25W — recommended
+#   bash benchmark-moe-rpc.sh --power-mode 1 --only gpt-oss
+#   bash benchmark-moe-rpc.sh --reqs 5
+#   bash benchmark-moe-rpc.sh --skip-smoke
+#   bash benchmark-moe-rpc.sh --dry-run
+#   bash benchmark-moe-rpc.sh --resume DIR --power-mode 1
 #
-# NOTE on --backend rpc: llama.cpp must be rebuilt with -DGGML_RPC=ON -DGGML_CUDA=ON
-# on THIS node (llama-server) and on jetson2 + jetson3 (rpc-server only) before running.
-# Each cluster model is ~12-34GB — too big to keep all 6 resident at once, so they are
-# downloaded just-in-time and deleted after their sweep. Without --power-mode, the default
-# 4-mode power sweep will re-download every cluster model once per mode (~4x bandwidth) —
-# pass --power-mode explicitly to avoid that.
+# NOTE: llama.cpp must be built with -DGGML_RPC=ON -DGGML_CUDA=ON on THIS node
+# (llama-server) and on jetson2 + jetson3 (rpc-server only). Each cluster model
+# is ~12-20GB — too big to keep all resident at once on top of the rest of the
+# repo's artifacts, so they are downloaded just-in-time and deleted after their
+# sweep. Without --power-mode, the default 4-mode power sweep will re-download
+# every cluster model once per mode (~4x bandwidth) — pass --power-mode explicitly
+# to avoid that.
 
 set -euo pipefail
 
-# Pip installs user-local binaries here; add unconditeveryhionally so all sub-shells see it
+# Pip installs user-local binaries here; add unconditionally so all sub-shells see it
 export PATH="$HOME/.local/bin:$PATH"
 
 # ── Ensure tmux is installed ──────────────────────────────────────────────────
@@ -42,14 +38,12 @@ fi
 if ! command -v hf &>/dev/null; then
     echo "Hugging Face CLI (hf) not found — installing..."
 
-    # Try system package first (Debian 13 Trixie / PEP 668 compatible)
     if command -v apt-get &>/dev/null; then
         echo "Attempting system package install..."
         sudo apt-get update -qq && sudo apt-get install -y python3-huggingface-hub 2>/dev/null || true
         export PATH="$HOME/.local/bin:$PATH"
     fi
 
-    # If still not found, use pip with appropriate flags
     if ! command -v hf &>/dev/null; then
         echo "System package not available, using pip..."
         if command -v pip3 &>/dev/null; then
@@ -61,13 +55,11 @@ if ! command -v hf &>/dev/null; then
             echo "  sudo apt-get install -y python3-pip"
             exit 1
         fi
-        # Debian 13 Trixie requires --break-system-packages for global install
         $PIP_CMD install --break-system-packages -U "huggingface_hub[cli]" || \
         $PIP_CMD install --user -U "huggingface_hub[cli]"
         export PATH="$HOME/.local/bin:$PATH"
     fi
 
-    # Final verification
     if ! command -v hf &>/dev/null; then
         echo "ERROR: hf command still not available after install attempts."
         echo "Try manually: pip3 install --break-system-packages 'huggingface_hub[cli]'"
@@ -78,7 +70,7 @@ fi
 
 # ── Auto-relaunch inside tmux if not already there ────────────────────────────
 if [ -z "${TMUX:-}" ]; then
-    SESSION="non-reasoning-bench"
+    SESSION="moe-rpc-bench"
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     tmux new-session -d -s "$SESSION" \
         "bash $(realpath "$0") $(printf '%q ' "$@"); echo 'Done — press Enter to exit'; read"
@@ -88,7 +80,6 @@ if [ -z "${TMUX:-}" ]; then
 fi
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BACKEND="llamacpp"    # llamacpp | ollama | both
 REQS=20
 ONLY_MODEL=""
 SKIP_SMOKE=0
@@ -103,7 +94,6 @@ RANDOM_SEED=42
 REQUEST_TIMEOUT=180
 COOLDOWN_COMBO=10
 COOLDOWN_MODEL=30
-COOLDOWN_BACKEND=45   # wait between llamacpp and ollama runs
 SERVER_STARTUP_TIMEOUT=300
 
 PROMPT_LENGTHS=(128 512 1024 2048)
@@ -112,94 +102,32 @@ CONTEXT_SIZE=2560   # max_prompt(2048) + max_gen(256) = 2304, padded to 2560
 
 LLAMACPP_BIN="${LLAMACPP_BIN:-$HOME/llama.cpp/build/bin/llama-server}"
 LLAMACPP_PORT=8080
-OLLAMA_PORT=11434
 
-# ── RPC cluster config (multi-node MoE tier) ─────────────────────────────────
+# ── RPC cluster config ────────────────────────────────────────────────────────
 # ssh aliases below must exist in ~/.ssh/config and be reachable key-auth, no password.
 RPC_WORKER_HOSTS=(jetson2 jetson3)
 RPC_WORKER_ADDRS=("10.10.1.2:50052" "10.10.1.3:50052")
-RPC_SERVER_BIN="$HOME/llama.cpp/build/bin/rpc-server"   # same path expected on all 3 nodes
+RPC_SERVER_BIN="$HOME/llama.cpp/build/bin/ggml-rpc-server"   # same path expected on all 3 nodes
 RPC_GGUF_DIR="$HOME/cluster-gguf-models"                # JIT scratch dir, cleaned per combo
 RPC_ENDPOINTS=$(IFS=,; echo "${RPC_WORKER_ADDRS[*]}")
 
-GGUF_DIR="$HOME/gguf-models"
-TEGRA_PIDFILE="/tmp/blog_bench_tegrastats.pid"
-COMBO_TEGRA_PIDFILE="/tmp/blog_bench_combo_tegrastats.pid"
-SERVER_PIDFILE="/tmp/blog_bench_server.pid"
-REPORT_PY="/tmp/blog_report_v2.py"
+TEGRA_PIDFILE="/tmp/moe_bench_tegrastats.pid"
+COMBO_TEGRA_PIDFILE="/tmp/moe_bench_combo_tegrastats.pid"
+SERVER_PIDFILE="/tmp/moe_bench_server.pid"
+REPORT_PY="/tmp/moe_report.py"
 
-# ── Model table: name|quant|gguf_path|tokenizer|ctx_size ─────────────────────
-declare -a MODELS=(
-    "smollm2-135m|Q4_K_M|$GGUF_DIR/smollm2-135mq4_k_m.gguf|HuggingFaceTB/SmolLM2-135M-Instruct|2560"
-    "smollm2-360m|Q8_0|$GGUF_DIR/smollm2-360mq8_0|HuggingFaceTB/SmolLM2-360M-Instruct|2560"
-    "qwen2.5-0.5b|Q4_K_M|$GGUF_DIR/qwen2-5-0-5bq4_k_m|Qwen/Qwen2.5-0.5B-Instruct|2560"
-    "qwen3-0.6b|Q8_0|$GGUF_DIR/Qwen3-0.6B-Q8_0.gguf|Qwen/Qwen3-0.6B|2560"
-    "llama3.2-1b|Q4_K_M|$GGUF_DIR/llama3-2-1bq4_k_m.gguf|meta-llama/Llama-3.2-1B-Instruct|2560"
-    "gemma3-1b|Q4_K_M|$GGUF_DIR/gemma3-1b-q4_k_m.gguf|google/gemma-3-1b-it|2560"
-"lfm2.5-350m|Q4_K_M|$GGUF_DIR/lfm2.5-350m-q4_k_m.gguf|LiquidAI/LFM2.5-350M|2560"
-    "lfm2.5-1.2b|Q4_K_M|$GGUF_DIR/lfm2.5-1.2b-q4_k_m.gguf|LiquidAI/LFM2.5-1.2B-Instruct|2560"
-)
-
-# ── GGUF download sources: local_filename -> "hf_repo hf_filename" ────────────
-declare -A GGUF_SOURCES=(
-    ["smollm2-135mq4_k_m.gguf"]="bartowski/SmolLM2-135M-Instruct-GGUF SmolLM2-135M-Instruct-Q4_K_M.gguf"
-    ["smollm2-360mq8_0"]="bartowski/SmolLM2-360M-Instruct-GGUF SmolLM2-360M-Instruct-Q8_0.gguf"
-    ["qwen2-5-0-5bq4_k_m"]="Qwen/Qwen2.5-0.5B-Instruct-GGUF qwen2.5-0.5b-instruct-q4_k_m.gguf"
-    ["Qwen3-0.6B-Q8_0.gguf"]="Qwen/Qwen3-0.6B-GGUF Qwen3-0.6B-Q8_0.gguf"
-    ["llama3-2-1bq4_k_m.gguf"]="bartowski/Llama-3.2-1B-Instruct-GGUF Llama-3.2-1B-Instruct-Q4_K_M.gguf"
-    ["gemma3-1b-q4_k_m.gguf"]="lmstudio-community/gemma-3-1b-it-GGUF gemma-3-1b-it-Q4_K_M.gguf"
-["lfm2.5-350m-q4_k_m.gguf"]="LiquidAI/LFM2.5-350M-GGUF LFM2.5-350M-Q4_K_M.gguf"
-    ["lfm2.5-1.2b-q4_k_m.gguf"]="LiquidAI/LFM2.5-1.2B-Instruct-GGUF LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
-)
-
-# ── Cluster MoE model table (RPC backend only): name|quant|hf_repo|hf_file|tokenizer|ctx_size ─
-# Downloaded just-in-time by run_llamacpp_rpc() — NOT part of the bulk pre-flight download,
-# since all 6 combined (~129GB) don't fit resident on any one node's free disk.
+# ── Cluster MoE model table: name|quant|hf_repo|hf_file|tokenizer|ctx_size ────
+# Downloaded just-in-time — NOT bulk pre-fetched, since the whole set doesn't
+# fit resident on disk alongside everything else on the head node.
 declare -a CLUSTER_MODELS=(
     "gpt-oss-20b|Q4_K_M|unsloth/gpt-oss-20b-GGUF|gpt-oss-20b-Q4_K_M.gguf|openai/gpt-oss-20b|2560"
     "qwen3-30b-a3b|Q4_K_M|bartowski/Qwen_Qwen3-30B-A3B-GGUF|Qwen_Qwen3-30B-A3B-Q4_K_M.gguf|Qwen/Qwen3-30B-A3B|2560"
     "granite4-32b-a9b|Q4_K_M|bartowski/ibm-granite_granite-4.0-h-small-GGUF|ibm-granite_granite-4.0-h-small-Q4_K_M.gguf|ibm-granite/granite-4.0-h-small|2560"
 )
 
-# ── Ollama per-model config: name -> "template_type" ─────────────────────────
-# No registry fallback — GGUF must be present. If import fails, model is skipped.
-# template_type: chatml | chatml-smollm2 | lfm | llama3 | gemma
-# Stop tokens are set per template_type inside make_ollama_modelfile().
-declare -A OLLAMA_CFG=(
-    # SmolLM2 uses <|im_start|> as BOS token — needs both as stop tokens.
-    # Source: HuggingFaceTB/SmolLM2-135M-Instruct tokenizer_config.json
-    ["smollm2-135m"]="chatml-smollm2"
-    ["smollm2-360m"]="chatml-smollm2"
-
-    # Qwen2.5: standard ChatML, EOS=<|im_end|>, no BOS.
-    # Source: Qwen/Qwen2.5-0.5B-Instruct tokenizer_config.json
-    ["qwen2.5-0.5b"]="chatml"
-
-    # Qwen3: standard ChatML, EOS=<|im_end|>, no BOS.
-    # Source: Qwen/Qwen3-0.6B tokenizer_config.json
-    ["qwen3-0.6b"]="chatml"
-
-    # LFM2.5: ChatML with <|startoftext|> BOS, stop on <|im_end|> and <|endoftext|>.
-    # Source: LiquidAI/LFM2.5-350M tokenizer_config.json + docs.liquid.ai chat template
-    ["lfm2.5-350m"]="lfm"
-    ["lfm2.5-1.2b"]="lfm"
-
-    # Llama-3.2: uses header-based format. BOS=<|begin_of_text|> (added by tokenizer).
-    # Stop: <|eot_id|>, <|start_header_id|>, <|end_header_id|>.
-    # Source: meta-llama/Llama-3.2-1B-Instruct tokenizer_config.json + ollama.com/library/llama3.2
-    ["llama3.2-1b"]="llama3"
-
-    # Gemma3: NO system role support (raises exception in official template).
-    # System messages merged into the user turn. BOS token=<bos> (added by tokenizer).
-    # Stop: <end_of_turn>, <start_of_turn>. Role name is "model" not "assistant".
-    # Source: google/gemma-3-1b-it tokenizer_config.json + ai.google.dev/gemma/docs
-    ["gemma3-1b"]="gemma"
-)
-
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --backend)     BACKEND="$2";      shift 2 ;;
         --reqs)        REQS="$2";         shift 2 ;;
         --only)        ONLY_MODEL="$2";   shift 2 ;;
         --skip-smoke)  SKIP_SMOKE=1;      shift ;;
@@ -219,8 +147,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ "$BACKEND" =~ ^(llamacpp|ollama|both|rpc)$ ]] || { echo "ERROR: --backend must be llamacpp|ollama|both|rpc"; exit 1; }
-
 # ── Sweep setup ───────────────────────────────────────────────────────────────
 SWEEP_DATE=$(date +%Y%m%d-%H%M)
 if [ -n "$RESUME_DIR" ] || [ "$POWER_MODE_EXPLICIT" = 1 ]; then
@@ -229,13 +155,11 @@ if [ -n "$RESUME_DIR" ] || [ "$POWER_MODE_EXPLICIT" = 1 ]; then
 else
     SWEEP_MODES=(2 1 0 3)
     SWEEP_NAMES=(maxn 25w 15w 7w)
+    echo "  [WARN] No --power-mode given — defaulting to a 4-mode sweep. Each cluster"
+    echo "         model is deleted after its sweep, so this re-downloads all 3 models"
+    echo "         once per mode (~4x, up to ~200GB total). Pass --power-mode to avoid this."
 fi
 # BASE_ARTIFACT and TIMING_LOG are resolved per-mode inside the sweep loop
-
-if [ "$BACKEND" = "rpc" ] && [ "${#SWEEP_MODES[@]}" -gt 1 ]; then
-    echo "  [WARN] --backend rpc without --power-mode will re-download every cluster model"
-    echo "         once per power mode (~4x, up to ~500GB total). Pass --power-mode explicitly to avoid this."
-fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 banner() { echo ""; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; echo "  $*"; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; }
@@ -265,12 +189,11 @@ stop_combo_tegrastats() {
     rm -f "$COMBO_TEGRA_PIDFILE"
 }
 
-# Snapshot RSS (VmRSS) of the llama-server process, and — when include_workers=1 —
-# of rpc-server on each RPC worker. Appends to <artifact_dir>/rss.log. Cheap point-in-time
-# read via /proc, not a continuous sampler, so it's called once before and once after
-# each aiperf run rather than backgrounded like tegrastats.
+# Snapshot RSS (VmRSS) of llama-server on the head node and rpc-server on each RPC
+# worker. Appends to <artifact_dir>/rss.log. Cheap point-in-time read via /proc,
+# called once before and once after each aiperf run rather than backgrounded.
 sample_rss_snapshot() {
-    local artifact_dir="$1" label="$2" include_workers="${3:-0}"
+    local artifact_dir="$1" label="$2"
     [ "$DRY_RUN" = 1 ] && return
     {
         echo "=== $label $(date '+%Y-%m-%d %H:%M:%S') ==="
@@ -279,43 +202,14 @@ sample_rss_snapshot() {
             rss_kb=$(awk '/VmRSS/{print $2}' "/proc/$(cat "$SERVER_PIDFILE")/status" 2>/dev/null || echo "?")
             printf "  head (%s): %s kB\n" "$(hostname)" "$rss_kb"
         fi
-        if [ "$include_workers" = 1 ]; then
-            for host in "${RPC_WORKER_HOSTS[@]}"; do
-                local worker_rss
-                worker_rss=$(ssh -o ConnectTimeout=5 "$host" \
-                    "pid=\$(pgrep -f rpc-server | head -1); [ -n \"\$pid\" ] && awk '/VmRSS/{print \$2}' /proc/\$pid/status || echo '?'" \
-                    2>/dev/null)
-                printf "  %s: %s kB\n" "$host" "${worker_rss:-?}"
-            done
-        fi
+        for host in "${RPC_WORKER_HOSTS[@]}"; do
+            local worker_rss
+            worker_rss=$(ssh -o ConnectTimeout=5 "$host" \
+                "pid=\$(pgrep -f rpc-server | head -1); [ -n \"\$pid\" ] && awk '/VmRSS/{print \$2}' /proc/\$pid/status || echo '?'" \
+                2>/dev/null)
+            printf "  %s: %s kB\n" "$host" "${worker_rss:-?}"
+        done
     } >> "$artifact_dir/rss.log"
-}
-
-restart_ollama() {
-    local model_tag="${1:-}"
-    log "  [!] Attempting Ollama restart..."
-    sudo systemctl restart ollama 2>/dev/null || \
-        { pkill -f "ollama serve" 2>/dev/null; sleep 2; OLLAMA_HOST=0.0.0.0 ollama serve &>/dev/null & }
-    sleep 5
-    echo 3 | sudo tee /proc/sys/vm/drop_caches    > /dev/null 2>&1 || true
-    echo 1 | sudo tee /proc/sys/vm/compact_memory > /dev/null 2>&1 || true
-    sleep 3
-    local elapsed=0
-    while [ "$elapsed" -lt 60 ]; do
-        local code
-        code=$(curl -s "http://localhost:$OLLAMA_PORT/api/tags" --max-time 3 \
-               -o /dev/null -w "%{http_code}" 2>/dev/null || true)
-        [ "$code" = "200" ] && log "  [OK] Ollama restarted at t=${elapsed}s" && break
-        sleep 2; elapsed=$((elapsed + 2))
-    done
-    [ "$elapsed" -ge 60 ] && { log "  [FAIL] Ollama did not come back within 60s"; return 1; }
-    if [ -n "$model_tag" ]; then
-        log "  Re-warming $model_tag..."
-        curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
-            -d "{\"model\":\"$model_tag\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" \
-            --max-time 120 -o /dev/null 2>/dev/null || true
-    fi
-    return 0
 }
 
 kill_llamacpp() {
@@ -342,6 +236,7 @@ ensure_llamacpp_alive() {
     echo 1 | sudo tee /proc/sys/vm/compact_memory > /dev/null 2>&1 || true
     sleep 3
     "$LLAMACPP_BIN" -m "$model_path" --host 0.0.0.0 --port "$LLAMACPP_PORT" \
+        --rpc "$RPC_ENDPOINTS" \
         -ngl 99 --parallel 1 -c "$ctx_size" \
         --no-cache-prompt --cache-ram 0 \
         >> "$srv_log" 2>&1 &
@@ -398,7 +293,7 @@ sync_worker_power_mode() {
     done
 }
 
-# ── Smoke test (shared between backends) ──────────────────────────────────────
+# ── Smoke test ─────────────────────────────────────────────────────────────────
 smoke_test() {
     local url="$1" model_tag="$2"
     log "  ── Smoke ─────────────────────────────────────────────"
@@ -442,152 +337,7 @@ print(json.dumps({'model': sys.argv[1], 'messages': [{'role': 'user', 'content':
     return $((1 - pass))
 }
 
-# ── Ollama: build Modelfile content ──────────────────────────────────────────
-# Args: $1=gguf_path  $2=template_type  $3=ctx_size
-make_ollama_modelfile() {
-    local gguf_path="$1" tmpl_type="$2" ctx_size="$3"
-
-    # All templates share the same PARAMETER block at the top.
-    # num_ctx: Ollama's context window. num_keep=-1: keep all tokens in context.
-    # Print the FROM line and shared PARAMETERs first — every Modelfile must start with FROM.
-    printf 'FROM %s\nPARAMETER num_ctx %s\nPARAMETER num_keep -1\n' \
-        "$gguf_path" "$ctx_size"
-
-    case "$tmpl_type" in
-
-        # ── ChatML (Qwen2.5, Qwen3) ──────────────────────────────────────────
-        # EOS=<|im_end|> only. No BOS token in these models.
-        # Source: Qwen tokenizer_config.json (bos_token: null)
-        chatml)
-            cat <<'TMPL'
-PARAMETER stop "<|im_end|>"
-TEMPLATE """{{ if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
-{{ .Response }}<|im_end|>"""
-TMPL
-            ;;
-
-        # ── ChatML SmolLM2 ────────────────────────────────────────────────────
-        # BOS token is <|im_start|> (token_id=0 acts as BOS in SmolLM2 vocab).
-        # Stop on both <|im_end|> and <|im_start|> to prevent run-on generation.
-        # Source: HuggingFaceTB/SmolLM2-135M-Instruct tokenizer_config.json
-        #   bos_token: "<|im_start|>", eos_token: "<|im_end|>"
-        chatml-smollm2)
-            cat <<'TMPL'
-PARAMETER stop "<|im_end|>"
-PARAMETER stop "<|im_start|>"
-TEMPLATE """{{ if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
-{{ .Response }}<|im_end|>"""
-TMPL
-            ;;
-
-        # ── LFM2.5 ────────────────────────────────────────────────────────────
-        # BOS=<|startoftext|> must be prepended explicitly (added_tokens_encoder).
-        # EOS=<|im_end|>, also stop on <|endoftext|> which appears at sequence end.
-        # Source: LiquidAI/LFM2.5-350M tokenizer_config.json + docs.liquid.ai
-        lfm)
-            cat <<'TMPL'
-PARAMETER stop "<|im_end|>"
-PARAMETER stop "<|endoftext|>"
-TEMPLATE """<|startoftext|>{{ if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
-{{ .Response }}<|im_end|>"""
-TMPL
-            ;;
-
-        # ── Llama 3.2 ─────────────────────────────────────────────────────────
-        # BOS=<|begin_of_text|> is added automatically by the Llama tokenizer.
-        # Stop on all three special tokens to prevent partial header generation.
-        # Source: meta-llama/Llama-3.2-1B-Instruct tokenizer_config.json
-        #   added_tokens: <|eot_id|>=128001, <|start_header_id|>=128006, <|end_header_id|>=128007
-        llama3)
-            cat <<'TMPL'
-PARAMETER stop "<|eot_id|>"
-PARAMETER stop "<|start_header_id|>"
-PARAMETER stop "<|end_header_id|>"
-TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
-{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
-{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
-{{ .Response }}<|eot_id|>"""
-TMPL
-            ;;
-
-        # ── Gemma 3 ───────────────────────────────────────────────────────────
-        # Official template RAISES an exception for system role — unsupported.
-        # We merge .System into the user turn if provided (consistent with HF behavior).
-        # BOS=<bos> (token_id=2) added automatically by the Gemma tokenizer.
-        # Role name is "model" (not "assistant") — this is critical.
-        # Source: google/gemma-3-1b-it tokenizer_config.json + ai.google.dev/gemma/docs
-        gemma)
-            cat <<'TMPL'
-PARAMETER stop "<end_of_turn>"
-PARAMETER stop "<start_of_turn>"
-TEMPLATE """{{ if .Prompt }}<start_of_turn>user
-{{ if .System }}{{ .System }}
-
-{{ end }}{{ .Prompt }}<end_of_turn>
-<start_of_turn>model
-{{ end }}{{ .Response }}<end_of_turn>"""
-TMPL
-            ;;
-
-        *)
-            log "  [ERROR] Unknown template type: $tmpl_type"
-            return 1
-            ;;
-    esac
-}
-
-# ── Ollama: import GGUF and return the tag to use ─────────────────────────────
-# Prints the model tag to stdout. Returns 1 if both import and registry fail.
-import_ollama_model() {
-    local model_name="$1" gguf_path="$2" tmpl_type="$3" ctx_size="$4"
-    local import_tag="local-${model_name}"
-
-    # All log() calls in this function MUST go to stderr — this function is called
-    # via $() command substitution, so stdout is captured as the return value (model tag).
-    # Any log output on stdout would corrupt the model_tag variable.
-    if [ ! -f "$gguf_path" ]; then
-        log "  [FAIL] GGUF not found: $gguf_path" >&2
-        return 1
-    fi
-
-    log "  Importing GGUF as $import_tag…" >&2
-    local tmp_modelfile="/tmp/ollama_modelfile_${model_name}"
-    make_ollama_modelfile "$gguf_path" "$tmpl_type" "$ctx_size" > "$tmp_modelfile"
-    local err
-    if err=$(ollama create "$import_tag" -f "$tmp_modelfile" 2>&1); then
-        log "  [OK] Imported as $import_tag" >&2
-        echo "$import_tag"
-        return 0
-    else
-        log "  [FAIL] GGUF import failed: $(echo "$err" | head -2 | tr '\n' ' ')" >&2
-        return 1
-    fi
-}
-
-# ── Parse model table ─────────────────────────────────────────────────────────
-declare -a MODEL_NAMES MODEL_QUANTS MODEL_PATHS MODEL_TOKENIZERS MODEL_CTX_SIZES
-
-for entry in "${MODELS[@]}"; do
-    IFS='|' read -r n q p t c <<< "$entry"
-    MODEL_NAMES+=("$n")
-    MODEL_QUANTS+=("$q")
-    MODEL_PATHS+=("$p")
-    MODEL_TOKENIZERS+=("$t")
-    MODEL_CTX_SIZES+=("${c:-$CONTEXT_SIZE}")
-done
-
+# ── Parse cluster model table ─────────────────────────────────────────────────
 declare -a CLUSTER_MODEL_NAMES CLUSTER_MODEL_QUANTS CLUSTER_HF_REPOS CLUSTER_HF_FILES CLUSTER_MODEL_TOKENIZERS CLUSTER_MODEL_CTX_SIZES
 
 for entry in "${CLUSTER_MODELS[@]}"; do
@@ -601,9 +351,10 @@ for entry in "${CLUSTER_MODELS[@]}"; do
 done
 
 # ── Print config banner ───────────────────────────────────────────────────────
-banner "Blog LLM Benchmark  |  Jetson Orin Nano Super 8GB"
+banner "MoE RPC Cluster Benchmark  |  3× Jetson Orin Nano Super 8GB"
 echo "  Date      : $(date --iso-8601=seconds)"
-echo "  Backend   : $BACKEND"
+echo "  Head      : $(hostname)"
+echo "  Workers   : ${RPC_WORKER_HOSTS[*]}"
 echo "  Requests  : $REQS per run"
 echo "  Prompts   : ${PROMPT_LENGTHS[*]}"
 echo "  Gen lens  : ${GEN_LENGTHS[*]}"
@@ -626,25 +377,6 @@ echo 1 | sudo tee /proc/sys/vm/compact_memory > /dev/null 2>&1 || true
 CMA_FREE_KB=$(awk '/CmaFree/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
 log "CMA free: $(( CMA_FREE_KB / 1024 )) MiB"
 
-# ── Pre-flight: download missing GGUFs ───────────────────────────────────────
-banner "Pre-flight: checking / downloading missing GGUFs"
-mkdir -p "$GGUF_DIR"
-for local_name in "${!GGUF_SOURCES[@]}"; do
-    local_path="$GGUF_DIR/$local_name"
-    if [ -f "$local_path" ]; then
-        log "  [OK]   $local_name"
-        continue
-    fi
-    read -r hf_repo hf_file <<< "${GGUF_SOURCES[$local_name]}"
-    log "  [DL]   $local_name  ←  $hf_repo / $hf_file"
-    tmp_path="$GGUF_DIR/${hf_file}"
-    if hf download "$hf_repo" "$hf_file" --local-dir "$GGUF_DIR"; then
-        [ -f "$tmp_path" ] && mv "$tmp_path" "$local_path" && log "  [DONE] $local_name"
-    else
-        log "  [FAIL] Could not download $local_name — model will be skipped"
-    fi
-done
-
 # ── Activate aiperf venv (once) ──────────────────────────────────────────────
 source "$HOME/venv/bin/activate" 2>/dev/null || \
 source "$HOME/aiperf-env/bin/activate" 2>/dev/null || \
@@ -653,321 +385,14 @@ source "$HOME/aiperf-env/bin/activate" 2>/dev/null || \
 declare -a SKIPPED_MODELS BENCH_MODELS
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BACKEND: llama.cpp
+# RPC cluster run (head=this node, workers=jetson2 jetson3)
 # ══════════════════════════════════════════════════════════════════════════════
-run_llamacpp() {
-    banner "Backend: llama.cpp"
-    [ -f "$LLAMACPP_BIN" ] || { log "[SKIP] llama-server not found: $LLAMACPP_BIN"; return; }
-
-    for i in "${!MODEL_NAMES[@]}"; do
-        local MODEL_NAME="${MODEL_NAMES[$i]}"
-        local MODEL_QUANT="${MODEL_QUANTS[$i]}"
-        local MODEL_PATH="${MODEL_PATHS[$i]}"
-        local MODEL_TOKENIZER="${MODEL_TOKENIZERS[$i]}"
-        local MODEL_CTX_SIZE="${MODEL_CTX_SIZES[$i]}"
-
-        [[ -n "$ONLY_MODEL" && "${MODEL_NAME,,}" != *"${ONLY_MODEL,,}"* ]] && continue
-        [ "$DRY_RUN" = 1 ] && { log "[DRY RUN] llamacpp: $MODEL_NAME  path=$([ -f "$MODEL_PATH" ] && echo OK || echo MISSING)"; continue; }
-
-        # Resume: skip if all combos already done
-        local missing=0
-        for G in "${GEN_LENGTHS[@]}"; do
-            for P in "${PROMPT_LENGTHS[@]}"; do
-                [ ! -f "$BASE_ARTIFACT/llamacpp/$MODEL_NAME/gen${G}/ctx${P}/profile_export_aiperf.json" ] && \
-                    missing=$((missing + 1))
-            done
-        done
-        if [ "$missing" = 0 ]; then
-            log "  [RESUME SKIP] llamacpp/$MODEL_NAME — all combos done"
-            BENCH_MODELS+=("llamacpp:$i")
-            continue
-        fi
-
-        echo ""
-        echo "  ┌─────────────────────────────────────────────────────┐"
-        printf "  │  llamacpp / %-40s│\n" "$MODEL_NAME ($MODEL_QUANT)"
-        printf "  │  ctx=%-47s│\n" "$MODEL_CTX_SIZE"
-        echo "  └─────────────────────────────────────────────────────┘"
-
-        if [ ! -f "$MODEL_PATH" ]; then
-            log "  [SKIP] GGUF not found: $MODEL_PATH"
-            SKIPPED_MODELS+=("llamacpp:$MODEL_NAME (file not found)")
-            continue
-        fi
-
-        local SERVER_LOG="$BASE_ARTIFACT/llamacpp/${MODEL_NAME}-server.log"
-        mkdir -p "$(dirname "$SERVER_LOG")"
-        log "Launching llama-server on :$LLAMACPP_PORT..."
-        "$LLAMACPP_BIN" -m "$MODEL_PATH" \
-            --host 0.0.0.0 --port "$LLAMACPP_PORT" \
-            -ngl 99 --parallel 1 -c "$MODEL_CTX_SIZE" \
-            --no-cache-prompt --cache-ram 0 \
-            > "$SERVER_LOG" 2>&1 &
-        echo $! > "$SERVER_PIDFILE"
-        log "  PID: $(cat "$SERVER_PIDFILE")"
-
-        local READY=0 ELAPSED=0
-        while [ "$ELAPSED" -lt "$SERVER_STARTUP_TIMEOUT" ]; do
-            sleep 2; ELAPSED=$((ELAPSED + 2))
-            if ! kill -0 "$(cat "$SERVER_PIDFILE" 2>/dev/null)" 2>/dev/null; then
-                log "  [!] Server died at t=${ELAPSED}s (OOM?)"
-                grep -E "error|OOM|failed|CUDA" "$SERVER_LOG" | tail -5 | sed 's/^/      /'
-                kill_llamacpp; break
-            fi
-            local CODE
-            CODE=$(curl -s "http://localhost:$LLAMACPP_PORT/v1/models" --max-time 3 \
-                   -o /dev/null -w "%{http_code}" 2>/dev/null || true)
-            if   [ "$CODE" = "200" ]; then READY=1; log "  [OK] HTTP 200 at t=${ELAPSED}s"; break
-            elif [ "$CODE" = "503" ]; then log "  t=${ELAPSED}s: loading weights..."
-            else                           log "  t=${ELAPSED}s: HTTP $CODE"; fi
-        done
-
-        if [ "$READY" = 0 ]; then
-            log "  [FAIL] $MODEL_NAME — server did not start"
-            SKIPPED_MODELS+=("llamacpp:$MODEL_NAME (server failed)")
-            kill_llamacpp; continue
-        fi
-
-        if [ "$SKIP_SMOKE" = 1 ]; then
-            log "  [SMOKE SKIP]"
-        else
-            if ! smoke_test "http://localhost:$LLAMACPP_PORT" "$MODEL_NAME"; then
-                log "  [SMOKE FAIL] $MODEL_NAME — skipping"
-                SKIPPED_MODELS+=("llamacpp:$MODEL_NAME (smoke failed)")
-                kill_llamacpp; continue
-            fi
-            log "  [SMOKE PASS]"
-        fi
-
-        BENCH_MODELS+=("llamacpp:$i")
-
-        local RUN_NUM=0
-        local TOTAL_RUNS=$(( ${#GEN_LENGTHS[@]} * ${#PROMPT_LENGTHS[@]} ))
-        for GEN in "${GEN_LENGTHS[@]}"; do
-            for CTX in "${PROMPT_LENGTHS[@]}"; do
-                RUN_NUM=$((RUN_NUM + 1))
-                local ARTIFACT_DIR="$BASE_ARTIFACT/llamacpp/$MODEL_NAME/gen${GEN}/ctx${CTX}"
-                mkdir -p "$ARTIFACT_DIR"
-                [ -f "$ARTIFACT_DIR/profile_export_aiperf.json" ] && \
-                    { log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX gen=$GEN  [RESUME SKIP]"; continue; }
-                log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX  gen=$GEN  reqs=$REQS"
-                if ! ensure_llamacpp_alive "$MODEL_PATH" "$MODEL_CTX_SIZE" "$SERVER_LOG"; then
-                    log "  [ABORT] Cannot recover server"
-                    SKIPPED_MODELS+=("llamacpp:$MODEL_NAME (server unrecoverable at gen=$GEN ctx=$CTX)")
-                    stop_combo_tegrastats
-                    break 2
-                fi
-                # Write combo metadata so report.py can read quant without timing_log
-                printf '{"model":"%s","quant":"%s","backend":"llamacpp","gen":%d,"ctx":%d}\n' \
-                    "$MODEL_NAME" "$MODEL_QUANT" "$GEN" "$CTX" > "$ARTIFACT_DIR/combo_info.json"
-                start_combo_tegrastats "$ARTIFACT_DIR"
-                sample_rss_snapshot "$ARTIFACT_DIR" "pre-aiperf"
-                aiperf profile \
-                    --model                         "$MODEL_NAME" \
-                    --streaming \
-                    --endpoint-type                 'chat' \
-                    --url                           "http://localhost:$LLAMACPP_PORT" \
-                    --tokenizer                     "$MODEL_TOKENIZER" \
-                    --synthetic-input-tokens-mean   "$CTX" \
-                    --synthetic-input-tokens-stddev 0 \
-                    --output-tokens-mean            "$GEN" \
-                    --request-count                 "$REQS" \
-                    --concurrency                   "$CONCURRENCY" \
-                    --slice-duration                "$SLICE_DURATION" \
-                    --random-seed                   "$RANDOM_SEED" \
-                    --request-timeout-seconds       "$REQUEST_TIMEOUT" \
-                    --artifact-dir                  "$ARTIFACT_DIR" \
-                    || log "  aiperf failed (ctx=$CTX gen=$GEN)"
-                sample_rss_snapshot "$ARTIFACT_DIR" "post-aiperf"
-                stop_combo_tegrastats
-                [ "$RUN_NUM" -lt "$TOTAL_RUNS" ] && { log "  Cooldown ${COOLDOWN_COMBO}s..."; sleep "$COOLDOWN_COMBO"; }
-            done
-        done
-
-        kill_llamacpp
-        log "Cooling ${COOLDOWN_MODEL}s..."
-        sleep "$COOLDOWN_MODEL"
-    done
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
-# BACKEND: Ollama
-# ══════════════════════════════════════════════════════════════════════════════
-run_ollama() {
-    banner "Backend: Ollama"
-    command -v ollama &>/dev/null || { log "[SKIP] ollama not installed"; return; }
-
-    # Free GPU memory from any stale llama-server before starting Ollama
-    log "Stopping stale llama-server processes..."
-    pkill -f "llama-server.*$LLAMACPP_PORT" 2>/dev/null || true
-    sleep 5
-    echo 3 | sudo tee /proc/sys/vm/drop_caches    > /dev/null 2>&1 || true
-    echo 1 | sudo tee /proc/sys/vm/compact_memory > /dev/null 2>&1 || true
-    sleep 3
-
-    log "Ensuring Ollama daemon is running..."
-    sudo systemctl start ollama 2>/dev/null || (OLLAMA_HOST=0.0.0.0 ollama serve &>/dev/null &)
-    sleep 3
-
-    local elapsed=0
-    while [ "$elapsed" -lt 30 ]; do
-        local code
-        code=$(curl -s "http://localhost:$OLLAMA_PORT/api/tags" --max-time 3 \
-               -o /dev/null -w "%{http_code}" 2>/dev/null || true)
-        [ "$code" = "200" ] && log "  [OK] Ollama daemon ready" && break
-        sleep 2; elapsed=$((elapsed + 2))
-    done
-    [ "$elapsed" -ge 30 ] && { log "[SKIP] Ollama daemon failed to start"; return; }
-
-    for i in "${!MODEL_NAMES[@]}"; do
-        local MODEL_NAME="${MODEL_NAMES[$i]}"
-        local MODEL_QUANT="${MODEL_QUANTS[$i]}"
-        local MODEL_PATH="${MODEL_PATHS[$i]}"
-        local MODEL_TOKENIZER="${MODEL_TOKENIZERS[$i]}"
-        local MODEL_CTX_SIZE="${MODEL_CTX_SIZES[$i]}"
-
-        [[ -n "$ONLY_MODEL" && "${MODEL_NAME,,}" != *"${ONLY_MODEL,,}"* ]] && continue
-
-        # Look up Ollama config for this model
-        if [ -z "${OLLAMA_CFG[$MODEL_NAME]+x}" ]; then
-            log "  [SKIP] No Ollama config for $MODEL_NAME"
-            continue
-        fi
-        local tmpl_type="${OLLAMA_CFG[$MODEL_NAME]}"
-
-        [ "$DRY_RUN" = 1 ] && { log "[DRY RUN] ollama: $MODEL_NAME  template=$tmpl_type"; continue; }
-
-        # Resume: skip if all combos already done
-        local missing=0
-        for G in "${GEN_LENGTHS[@]}"; do
-            for P in "${PROMPT_LENGTHS[@]}"; do
-                [ ! -f "$BASE_ARTIFACT/ollama/$MODEL_NAME/gen${G}/ctx${P}/profile_export_aiperf.json" ] && \
-                    missing=$((missing + 1))
-            done
-        done
-        if [ "$missing" = 0 ]; then
-            log "  [RESUME SKIP] ollama/$MODEL_NAME — all combos done"
-            BENCH_MODELS+=("ollama:$i")
-            continue
-        fi
-
-        echo ""
-        echo "  ┌─────────────────────────────────────────────────────┐"
-        printf "  │  ollama / %-42s│\n" "$MODEL_NAME ($MODEL_QUANT)"
-        printf "  │  template=%-42s│\n" "$tmpl_type  ctx=$MODEL_CTX_SIZE"
-        echo "  └─────────────────────────────────────────────────────┘"
-
-        # Import GGUF into Ollama — no fallback, error out if GGUF missing or import fails
-        local model_tag
-        if ! model_tag=$(import_ollama_model \
-                "$MODEL_NAME" "$MODEL_PATH" "$tmpl_type" "$MODEL_CTX_SIZE"); then
-            log "  [SKIP] $MODEL_NAME — GGUF import failed (see above)"
-            SKIPPED_MODELS+=("ollama:$MODEL_NAME (GGUF import failed)")
-            continue
-        fi
-
-        # Warm up: load model into GPU memory
-        log "  Warmup (loading $model_tag into GPU)..."
-        curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
-            -d "{\"model\":\"$model_tag\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" \
-            --max-time 120 -o /dev/null 2>/dev/null || true
-
-        if [ "$SKIP_SMOKE" = 1 ]; then
-            log "  [SMOKE SKIP]"
-        else
-            if ! smoke_test "http://localhost:$OLLAMA_PORT" "$model_tag"; then
-                log "  [SMOKE FAIL] $MODEL_NAME — dropping caches and retrying once..."
-                ollama stop "$model_tag" 2>/dev/null || true
-                sleep 5
-                echo 3 | sudo tee /proc/sys/vm/drop_caches    > /dev/null 2>&1 || true
-                echo 1 | sudo tee /proc/sys/vm/compact_memory > /dev/null 2>&1 || true
-                sleep 5
-                curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
-                    -d "{\"model\":\"$model_tag\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" \
-                    --max-time 120 -o /dev/null 2>/dev/null || true
-                if ! smoke_test "http://localhost:$OLLAMA_PORT" "$model_tag"; then
-                    log "  [SMOKE FAIL x2] $MODEL_NAME — skipping"
-                    SKIPPED_MODELS+=("ollama:$MODEL_NAME (smoke failed x2)")
-                    ollama stop "$model_tag" 2>/dev/null || true
-                    sleep 5; continue
-                fi
-            fi
-            log "  [SMOKE PASS]"
-        fi
-
-        BENCH_MODELS+=("ollama:$i")
-
-        local RUN_NUM=0
-        local TOTAL_RUNS=$(( ${#GEN_LENGTHS[@]} * ${#PROMPT_LENGTHS[@]} ))
-        for GEN in "${GEN_LENGTHS[@]}"; do
-            for CTX in "${PROMPT_LENGTHS[@]}"; do
-                RUN_NUM=$((RUN_NUM + 1))
-                local ARTIFACT_DIR="$BASE_ARTIFACT/ollama/$MODEL_NAME/gen${GEN}/ctx${CTX}"
-                mkdir -p "$ARTIFACT_DIR"
-                [ -f "$ARTIFACT_DIR/profile_export_aiperf.json" ] && \
-                    { log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX gen=$GEN  [RESUME SKIP]"; continue; }
-                log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX  gen=$GEN  reqs=$REQS"
-
-                # Verify Ollama is still alive; attempt restart if not
-                local code
-                code=$(curl -s "http://localhost:$OLLAMA_PORT/api/tags" --max-time 5 \
-                       -o /dev/null -w "%{http_code}" 2>/dev/null || true)
-                if [ "$code" != "200" ]; then
-                    log "  [!] Ollama not responding at gen=$GEN ctx=$CTX"
-                    stop_combo_tegrastats
-                    if ! restart_ollama "$model_tag"; then
-                        log "  [ABORT] Ollama unrecoverable — skipping remaining combos"
-                        SKIPPED_MODELS+=("ollama:$MODEL_NAME (ollama died at gen=$GEN ctx=$CTX, restart failed)")
-                        break 2
-                    fi
-                    log "  [RECOVERED] Continuing from gen=$GEN ctx=$CTX"
-                fi
-
-                # Write combo metadata so report.py can read quant without timing_log
-                printf '{"model":"%s","quant":"%s","backend":"ollama","gen":%d,"ctx":%d}\n' \
-                    "$MODEL_NAME" "$MODEL_QUANT" "$GEN" "$CTX" > "$ARTIFACT_DIR/combo_info.json"
-                start_combo_tegrastats "$ARTIFACT_DIR"
-                aiperf profile \
-                    --model                         "$model_tag" \
-                    --streaming \
-                    --endpoint-type                 'chat' \
-                    --url                           "http://localhost:$OLLAMA_PORT" \
-                    --tokenizer                     "$MODEL_TOKENIZER" \
-                    --synthetic-input-tokens-mean   "$CTX" \
-                    --synthetic-input-tokens-stddev 0 \
-                    --output-tokens-mean            "$GEN" \
-                    --request-count                 "$REQS" \
-                    --concurrency                   "$CONCURRENCY" \
-                    --slice-duration                "$SLICE_DURATION" \
-                    --random-seed                   "$RANDOM_SEED" \
-                    --request-timeout-seconds       "$REQUEST_TIMEOUT" \
-                    --artifact-dir                  "$ARTIFACT_DIR" \
-                    --use-legacy-max-tokens \
-                    || log "  aiperf failed (ctx=$CTX gen=$GEN)"
-                stop_combo_tegrastats
-                [ "$RUN_NUM" -lt "$TOTAL_RUNS" ] && { log "  Cooldown ${COOLDOWN_COMBO}s..."; sleep "$COOLDOWN_COMBO"; }
-            done
-        done
-        log "Unloading $model_tag from GPU..."
-        # OLLAMA_KEEP_ALIVE=0 ensures model is immediately evicted from GPU memory
-        curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
-            -d "{\"model\":\"$model_tag\",\"keep_alive\":0,\"prompt\":\"\"}" \
-            --max-time 10 -o /dev/null 2>/dev/null || true
-        ollama stop "$model_tag" 2>/dev/null || true
-        log "Cooling ${COOLDOWN_MODEL}s..."
-        sleep "$COOLDOWN_MODEL"
-    done
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
-# BACKEND: llama.cpp RPC cluster (head=this node, workers=jetson2 jetson3)
-# ══════════════════════════════════════════════════════════════════════════════
-run_llamacpp_rpc() {
-    banner "Backend: llama.cpp RPC cluster (head=$(hostname), workers=${RPC_WORKER_HOSTS[*]})"
-    [ -f "$LLAMACPP_BIN" ] || { log "[SKIP] llama-server not found: $LLAMACPP_BIN (build with -DGGML_RPC=ON -DGGML_CUDA=ON)"; return; }
+run_moe_cluster() {
+    banner "MoE cluster: head=$(hostname), workers=${RPC_WORKER_HOSTS[*]}"
+    [ -f "$LLAMACPP_BIN" ] || { log "[ABORT] llama-server not found: $LLAMACPP_BIN (build with -DGGML_RPC=ON -DGGML_CUDA=ON)"; return; }
 
     mkdir -p "$RPC_GGUF_DIR"
-    start_rpc_workers || { log "[ABORT] RPC workers failed to start — skipping rpc backend"; return; }
+    start_rpc_workers || { log "[ABORT] RPC workers failed to start"; return; }
     sync_worker_power_mode
 
     for i in "${!CLUSTER_MODEL_NAMES[@]}"; do
@@ -981,7 +406,7 @@ run_llamacpp_rpc() {
         local MODEL_PATH="$RPC_GGUF_DIR/${COMBO_NAME}.gguf"
 
         [[ -n "$ONLY_MODEL" && "${MODEL_NAME,,}" != *"${ONLY_MODEL,,}"* ]] && continue
-        [ "$DRY_RUN" = 1 ] && { log "[DRY RUN] rpc: $COMBO_NAME  ($HF_REPO/$HF_FILE)"; continue; }
+        [ "$DRY_RUN" = 1 ] && { log "[DRY RUN] $COMBO_NAME  ($HF_REPO/$HF_FILE)"; continue; }
 
         # Resume: skip if all combos already done
         local missing=0
@@ -992,21 +417,21 @@ run_llamacpp_rpc() {
             done
         done
         if [ "$missing" = 0 ]; then
-            log "  [RESUME SKIP] llamacpp-rpc/$COMBO_NAME — all combos done"
+            log "  [RESUME SKIP] $COMBO_NAME — all combos done"
             BENCH_MODELS+=("llamacpp-rpc:$i")
             continue
         fi
 
         echo ""
         echo "  ┌─────────────────────────────────────────────────────┐"
-        printf "  │  llamacpp-rpc / %-36s│\n" "$COMBO_NAME"
+        printf "  │  %-52s│\n" "$COMBO_NAME"
         printf "  │  workers=%-43s│\n" "${RPC_WORKER_HOSTS[*]}"
         echo "  └─────────────────────────────────────────────────────┘"
 
         log "  Downloading $HF_FILE from $HF_REPO (JIT — deleted after this combo)..."
         if ! hf download "$HF_REPO" "$HF_FILE" --local-dir "$RPC_GGUF_DIR"; then
             log "  [SKIP] download failed: $HF_REPO/$HF_FILE"
-            SKIPPED_MODELS+=("llamacpp-rpc:$COMBO_NAME (download failed)")
+            SKIPPED_MODELS+=("$COMBO_NAME (download failed)")
             continue
         fi
         mv "$RPC_GGUF_DIR/$HF_FILE" "$MODEL_PATH"
@@ -1041,7 +466,7 @@ run_llamacpp_rpc() {
 
         if [ "$READY" = 0 ]; then
             log "  [FAIL] $COMBO_NAME — server did not start"
-            SKIPPED_MODELS+=("llamacpp-rpc:$COMBO_NAME (server failed)")
+            SKIPPED_MODELS+=("$COMBO_NAME (server failed)")
             kill_llamacpp; rm -f "$MODEL_PATH"; continue
         fi
 
@@ -1050,7 +475,7 @@ run_llamacpp_rpc() {
         else
             if ! smoke_test "http://localhost:$LLAMACPP_PORT" "$MODEL_NAME"; then
                 log "  [SMOKE FAIL] $COMBO_NAME — skipping"
-                SKIPPED_MODELS+=("llamacpp-rpc:$COMBO_NAME (smoke failed)")
+                SKIPPED_MODELS+=("$COMBO_NAME (smoke failed)")
                 kill_llamacpp; rm -f "$MODEL_PATH"; continue
             fi
             log "  [SMOKE PASS]"
@@ -1070,14 +495,14 @@ run_llamacpp_rpc() {
                 log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX  gen=$GEN  reqs=$REQS"
                 if ! ensure_llamacpp_alive "$MODEL_PATH" "$MODEL_CTX_SIZE" "$SERVER_LOG"; then
                     log "  [ABORT] Cannot recover server"
-                    SKIPPED_MODELS+=("llamacpp-rpc:$COMBO_NAME (server unrecoverable at gen=$GEN ctx=$CTX)")
+                    SKIPPED_MODELS+=("$COMBO_NAME (server unrecoverable at gen=$GEN ctx=$CTX)")
                     stop_combo_tegrastats
                     break 2
                 fi
                 printf '{"model":"%s","quant":"%s","backend":"llamacpp-rpc","gen":%d,"ctx":%d}\n' \
                     "$MODEL_NAME" "$MODEL_QUANT" "$GEN" "$CTX" > "$ARTIFACT_DIR/combo_info.json"
                 start_combo_tegrastats "$ARTIFACT_DIR"
-                sample_rss_snapshot "$ARTIFACT_DIR" "pre-aiperf" 1
+                sample_rss_snapshot "$ARTIFACT_DIR" "pre-aiperf"
                 aiperf profile \
                     --model                         "$MODEL_NAME" \
                     --streaming \
@@ -1094,7 +519,7 @@ run_llamacpp_rpc() {
                     --request-timeout-seconds       "$REQUEST_TIMEOUT" \
                     --artifact-dir                  "$ARTIFACT_DIR" \
                     || log "  aiperf failed (ctx=$CTX gen=$GEN)"
-                sample_rss_snapshot "$ARTIFACT_DIR" "post-aiperf" 1
+                sample_rss_snapshot "$ARTIFACT_DIR" "post-aiperf"
                 stop_combo_tegrastats
                 [ "$RUN_NUM" -lt "$TOTAL_RUNS" ] && { log "  Cooldown ${COOLDOWN_COMBO}s..."; sleep "$COOLDOWN_COMBO"; }
             done
@@ -1147,7 +572,7 @@ for _sweep_idx in "${!SWEEP_MODES[@]}"; do
             log "ERROR: active mode ($active_mode) does not match requested $POWER_MODE_NAME."
             log "  The device may still need a reboot. Run:"
             log "    echo yes | sudo nvpmodel -m $POWER_MODE && sudo reboot"
-            log "  Then re-run with:  bash bench-non-reasoning-models-v2.sh --power-mode $POWER_MODE --backend $BACKEND"
+            log "  Then re-run with:  bash benchmark-moe-rpc.sh --power-mode $POWER_MODE"
             stop_combo_tegrastats; exit 1
         fi
         log "Power mode verified OK: $active_mode"
@@ -1155,23 +580,12 @@ for _sweep_idx in "${!SWEEP_MODES[@]}"; do
         sudo jetson_clocks --fan 2>/dev/null && log "jetson_clocks --fan OK" || log "fan control not available"
     fi
 
-    # ── Run backends ──────────────────────────────────────────────────────────
-    banner "Running benchmarks (backend=$BACKEND, power=$POWER_MODE_NAME)"
-
-    case "$BACKEND" in
-        llamacpp) run_llamacpp ;;
-        ollama)   run_ollama ;;
-        rpc)      run_llamacpp_rpc ;;
-        both)
-            run_llamacpp
-            log "Backend cooldown ${COOLDOWN_BACKEND}s before Ollama..."
-            sleep "$COOLDOWN_BACKEND"
-            run_ollama
-            ;;
-    esac
+    # ── Run cluster benchmark ─────────────────────────────────────────────────
+    banner "Running MoE cluster benchmarks (power=$POWER_MODE_NAME)"
+    run_moe_cluster
 
     stop_combo_tegrastats  # safety: ensure no combo tegrastats left running
-    [ "$BACKEND" = "rpc" ] && stop_rpc_workers  # safety: ensure no stray rpc-server processes
+    stop_rpc_workers       # safety: ensure no stray rpc-server processes
 
     if [ "$DRY_RUN" = 1 ]; then
         banner "Dry run complete ($POWER_MODE_NAME)"; continue
@@ -1302,7 +716,7 @@ lines = []
 def L(s=""): lines.append(s)
 def fmt(v, fs, fb="—"): return format(v, fs) if v is not None else fb
 
-L("# Tiny LLM Benchmark — Jetson Orin Nano Super 8GB")
+L("# MoE RPC Cluster Benchmark — 3× Jetson Orin Nano Super 8GB")
 L()
 L(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}  ")
 L(f"**Backends:** {', '.join(sorted(set(r['backend'] for r in results)))}  ")
@@ -1320,7 +734,7 @@ for backend in backends_present:
     backend_results = [r for r in results if r["backend"] == backend]
     L(f"## Full Results — {backend}")
     L()
-    L("> Power = VDD\\_CPU\\_GPU\\_CV avg over aiperf window.")
+    L("> Power = VDD\\_CPU\\_GPU\\_CV avg over aiperf window (head node only).")
     L()
     H = ("| Model | Quant | ISL | OSL | OSL mis% "
          "| TTFT avg | p50 | p90 | p99 "
@@ -1365,7 +779,7 @@ for key in sorted(best_tokj.keys()):
       f"| {fmt(b['tps'],'.2f')} | {fmt(b['power_w'],'.2f')} |")
 
 L()
-L("## Thermal Summary")
+L("## Thermal Summary (head node)")
 L()
 L("| Backend | Model | Avg Power (W) | Avg CPU (°C) | Avg GPU (°C) | Peak TJ (°C) | Throttled |")
 L("|---------|-------|---:|---:|---:|---:|:---:|")
@@ -1378,7 +792,7 @@ for key in sorted(thermal.keys()):
 
 L()
 L("---")
-L(f"*Generated by `bench-non-reasoning.sh` on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+L(f"*Generated by `benchmark-moe-rpc.sh` on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
 L(f"*{len(results)} rows  |  {len(set(r['backend'] for r in results))} backends  |  {len(set(r['model'] for r in results))} models*")
 
 with open(report_path, "w") as f:

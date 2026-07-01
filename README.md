@@ -8,41 +8,53 @@ Each subfolder is self-contained with its own benchmark scripts, chart generator
 
 ```
 smolbenchmark/
-├── README.md                      # this file
-├── non-reasoning-models/          # tiny instruct LLMs on Jetson
-│   ├── README.MD
-│   ├── bench-non-reasoning.sh
-│   ├── generate_combined_charts.py
-│   └── artifacts/
-│   
-├── bonsai-models/                 # Bonsai / Ternary-Bonsai family
+├── README.md                                # this file
+├── LICENSE
+│
+├── benchmark-jetson-nano-orin-super/         # NVIDIA Jetson Orin Nano Super 8GB
+│   ├── single-node/                         # single-board benchmarks
+│   │   ├── non-reasoning-models/            # 8 tiny instruct LLMs (135M-1.2B)
+│   │   │   ├── README.md
+│   │   │   ├── bench-non-reasoning-models-v2.sh
+│   │   │   ├── generate_combined_charts.py
+│   │   │   ├── benchmark_report.md
+│   │   │   └── artifacts/
+│   │   ├── bonsai-models/                   # Bonsai / Ternary-Bonsai family
+│   │   │   ├── README.md
+│   │   │   ├── benchmark_all_bonsai.sh
+│   │   │   ├── generate_combined_charts.py
+│   │   │   └── artifacts/
+│   │   └── mixture-of-experts/              # planned: single-board MoE tier
+│   └── multi-node/                          # 3-board cluster benchmarks
+│       └── mixture-of-experts/              # 3-node llama.cpp RPC cluster for MoE models
+│           ├── README.md
+│           └── benchmark-moe-rpc.sh
+│
+├── benchmark-mac-mini-m4/                   # Apple Mac Mini M4, 16GB unified memory
 │   ├── README.md
-│   ├── benchmark_all_bonsai.sh
-│   ├── gen_report.py
+│   └── benchmark_non_reasoning.sh
+│
+├── benchmark-raspberrypi5/                  # Raspberry Pi 5
+│   ├── README.md
+│   ├── BLOG.md
+│   ├── benchmark_all_cpu.sh
 │   └── artifacts/
-└── LICENSE
+│
+└── benchmark-mobile/
+    └── Android/                             # OnePlus 10R (Dimensity 8100-Max) via ADB
+        ├── README.md
+        └── benchmark-non-reasoning.sh
 ```
 
 ## Benchmarks
 
-### [non-reasoning-models](./benchmark-jetson-nano-orin-super/non-reasoning-models/)
+| Benchmark | Hardware | Models | Report |
+|-----------|----------|--------|--------|
+| [Non-Reasoning LLM Benchmark](./benchmark-jetson-nano-orin-super/single-node/non-reasoning-models/) | Jetson Orin Nano Super 8GB | 8 tiny instruct LLMs (135M-1.2B) | [smolhub.com](https://www.smolhub.com/posts/jetson-nano-super-benchmark-non-reasoning/) · [local report](./benchmark-jetson-nano-orin-super/single-node/non-reasoning-models/benchmark_report.md) |
+| [Bonsai / Ternary-Bonsai Benchmark](./benchmark-jetson-nano-orin-super/single-node/bonsai-models/) | Jetson Orin Nano Super 8GB | Bonsai + Ternary-Bonsai (1.7B / 4B / 8B), Q1_0/Q2_0 | [smolhub.com](https://www.smolhub.com/posts/jetson-orin-nano-super-bonsai-benchmark/) · [local report](./benchmark-jetson-nano-orin-super/single-node/bonsai-models/artifacts/benchmark_report.md) |
+| [MoE RPC Cluster Benchmark](./benchmark-jetson-nano-orin-super/multi-node/mixture-of-experts/) | 3× Jetson Orin Nano Super 8GB (RPC cluster) | gpt-oss-20b, Qwen3-30B-A3B, Granite4.0-H-Small (32B-A9B) | results pending |
 
-Eight tiny instruct LLMs (135M-1.2B params) benchmarked across four power envelopes on a Jetson Orin Nano Super 8GB. Tests throughput, latency, and energy efficiency (output tok/J) at every prompt x generation combination using both llama.cpp and Ollama backends. Includes a full published report with comparison charts and appendices.
-
-### [bonsai-models](./benchmark-jetson-nano-orin-super/bonsai-models/)
-
-Bonsai and Ternary-Bonsai model families (1.7B / 4B / 8B) with extreme quantization (Q1_0 / Q2_0) on Jetson hardware. Benchmarks throughput, energy efficiency, and latency across multiple power modes.
-
-More platform folders coming soon (Mac Mini, Raspberry Pi, phones, and tablets).
-
-## Published Reports
-
-| Report | Hardware | Models | Metrics |
-|--------|----------|--------|---------|
-| [Non-Reasoning LLM Benchmark](https://www.smolhub.com/posts/jetson-nano-super-benchmark-non-reasoning/) | Jetson Orin Nano Super 8GB | 8 tiny instruct LLMs | tok/s, tok/J, TTFT, ITL, power, latency |
-| [Bonsai LLM Benchmark](https://www.smolhub.com/posts/jetson-nano-super-benchmark-non-reasoning/) | Jetson Orin Nano Super 8GB | 8 tiny instruct LLMs | tok/s, tok/J, TTFT, ITL, power, latency |
-
-
+Single-board Jetson MoE benchmarks (`single-node/mixture-of-experts/`) are planned but not yet implemented.
 
 
 ## Philosophy
