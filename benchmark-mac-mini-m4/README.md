@@ -148,6 +148,28 @@ pip install -U "huggingface_hub"
 
 The benchmark script uses `hf download` to pull GGUFs on first run. Note: `huggingface_hub` ≥1.0 ships the CLI as `hf`, not `huggingface-cli`.
 
+### 6. Authenticate with Hugging Face (required for gated models)
+
+Some models used in this benchmark are **gated** on Hugging Face — you must accept the license on the model page while logged in, then authenticate this machine, before `aiperf` can load their tokenizer. Currently this applies to:
+
+- [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)
+- [google/gemma-3-12b-it](https://huggingface.co/google/gemma-3-12b-it)
+
+Without this, the benchmark aborts immediately with a `401 gated repo` error the first time it tries to run either model (see `abort()` behavior in [Running Benchmarks](#running-benchmarks) below — the script stops on the very first failed combo rather than silently skipping it).
+
+Steps:
+
+1. Visit each model page above while logged into your HF account and click "Acknowledge license" / "Agree and access repository".
+2. Generate an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (read access is enough).
+3. Log in from this machine:
+
+```bash
+~/Desktop/smolbenchmark/venv/bin/hf auth login
+# paste your token when prompted
+```
+
+This saves the token to `~/.cache/huggingface/token`, which `hf`, `aiperf`, and `transformers` all read automatically — no `--add-to-git-credential` or manual `HF_TOKEN` export needed for local use.
+
 ### 7. Install aiperf
 
 The `aiperf` package on PyPI (`pip install aiperf`) is a yanked non-functional placeholder — do not use it. Install from the real source into the repo's shared venv:
@@ -184,15 +206,28 @@ tmux attach -t bench
 
 Detach: `Ctrl+B D` — reattach: `tmux attach -t bench`
 
+**The script stops immediately on any failure** (bad download, server won't start, failed smoke test, gated-tokenizer 401, a single `aiperf` combo failing) rather than silently skipping the model and continuing the sweep — you'll see a `RUN STOPPED: <reason>` box the moment something breaks, instead of only finding out hours later when reading `report.md`. Fix the underlying issue, then re-run with `--resume <dir>` (see below) to continue exactly where it left off — already-completed combos are skipped automatically, so nothing needs to re-run.
+
+Low disk space? Combine `--backend mlxlm` with `--stream` to download/benchmark/delete one model at a time instead of pulling the whole set upfront:
+
+```bash
+bash benchmark_non_reasoning.sh --backend mlxlm --stream
+```
+
 ### Arguments
 
 ---
 
-#### `--backend <llamacpp|ollama>`
+#### `--backend <llamacpp|mlxlm>`
 
 - **Default:** `llamacpp`
 
-Inference backend. `llamacpp` launches `llama-server` directly. `ollama` uses the Ollama daemon's OpenAI-compatible endpoint.
+Inference backend. `llamacpp` launches `llama-server` directly (GGUF, Q4_K_M). `mlxlm` launches `mlx_lm.server` against MLX 4-bit conversions of the same models instead — same aiperf sweep and methodology either way, so `report.md` rows are directly comparable across backends. Not every model has a published MLX 4-bit conversion; those are skipped automatically for `--backend mlxlm` (currently `nemotron-mini-4b` and `nemotron-nano-8b`).
+
+```bash
+bash benchmark_non_reasoning.sh --backend llamacpp   # GGUF via llama.cpp (default)
+bash benchmark_non_reasoning.sh --backend mlxlm      # MLX 4-bit via mlx-lm
+```
 
 ---
 
@@ -239,6 +274,16 @@ Skip the per-model smoke test (saves ~1 min per model, removes early-failure det
 #### `--no-power`
 
 Skip `powermetrics` entirely. No sudo required. Power and tok/J columns will be empty in the report.
+
+---
+
+#### `--stream`
+
+Download one model, benchmark all of its combos, delete it, then move to the next model instead of downloading everything upfront. Keeps disk usage to roughly one model's size at a time instead of the full model set (GGUFs run 2-8 GB each, MLX conversions similar) — useful when disk space is tight. Only deletes what `--stream` itself downloaded this run; a model you already had on disk before starting is never touched.
+
+```bash
+bash benchmark_non_reasoning.sh --backend mlxlm --stream
+```
 
 ---
 

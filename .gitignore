@@ -9,12 +9,12 @@ benchmark-mobile/blis/
 models/
 gguf-models/
 
-# Benchmark artifacts (powermetrics logs, RSS logs, aiperf results)
-# Ignore everything inside artifacts/ except charts/
-artifacts/*
-!artifacts/charts/
-**/artifacts/*
-!**/artifacts/charts/
+# Benchmark artifacts (powermetrics logs, RSS logs, aiperf results, charts)
+artifacts/
+**/artifacts/
+
+# Generated blog posts (published separately; not committed to this repo)
+BLOG.md
 
 # Python
 venv/

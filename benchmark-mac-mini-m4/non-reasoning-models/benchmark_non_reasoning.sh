@@ -4,17 +4,24 @@
 # Per model: ONE server launch → smoke → aiperf sweep.
 # Sweeps: prompt in {256,512,1024,2048,4096} × gen in {256,512,1024}
 # Power measured via macOS powermetrics (requires sudo; skip with --no-power)
+# Backends: llamacpp (GGUF, default) or mlxlm (MLX 4-bit) — same aiperf
+# sweep/methodology either way, so report.md rows are directly comparable.
 #
 # Usage:
-#   bash benchmark_non_reasoning.sh                    # llamacpp only, all models
-#   bash benchmark_non_reasoning.sh --backend ollama   # ollama only
-#   bash benchmark_non_reasoning.sh --backend both     # llamacpp then ollama
+#   bash benchmark_non_reasoning.sh                    # llamacpp, all models
+#   bash benchmark_non_reasoning.sh --backend mlxlm    # MLX-LM instead of llama.cpp
 #   bash benchmark_non_reasoning.sh --reqs 20
 #   bash benchmark_non_reasoning.sh --only qwen3-8b
 #   bash benchmark_non_reasoning.sh --skip-smoke
 #   bash benchmark_non_reasoning.sh --dry-run
 #   bash benchmark_non_reasoning.sh --resume DIR
 #   bash benchmark_non_reasoning.sh --no-power         # skip powermetrics (no sudo needed)
+#   bash benchmark_non_reasoning.sh --stream           # download one model at a time,
+#                                                       # benchmark it, delete it, repeat —
+#                                                       # keeps disk usage to ~one model's
+#                                                       # worth instead of the whole set.
+#                                                       # Only deletes what --stream itself
+#                                                       # downloaded, never a pre-existing file.
 
 set -euo pipefail
 
@@ -51,29 +58,21 @@ if [ -z "${TMUX:-}" ]; then
     exit 0
 fi
 
-# ── Cache sudo for the full run (powermetrics needs it) ───────────────────────
-if [ "${NO_POWER:-0}" != 1 ]; then
-    sudo -v
-    ( while true; do sudo -n -v; sleep 60; done ) &
-    SUDO_KEEPALIVE_PID=$!
-    trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true' EXIT
-fi
-
 # ── Config ────────────────────────────────────────────────────────────────────
-BACKEND="llamacpp"    # llamacpp | ollama | both
+BACKEND="llamacpp"    # llamacpp | mlxlm
 REQS=20
 ONLY_MODEL=""
 SKIP_SMOKE=0
 DRY_RUN=0
 RESUME_DIR=""
 NO_POWER=0
+STREAM_MODELS=0   # --stream: download one model, benchmark it, delete it, repeat
 CONCURRENCY=1
 SLICE_DURATION=30
 RANDOM_SEED=42
 REQUEST_TIMEOUT=180
 COOLDOWN_COMBO=10
 COOLDOWN_MODEL=30
-COOLDOWN_BACKEND=45
 SERVER_STARTUP_TIMEOUT=300
 
 PROMPT_LENGTHS=(256 512 1024 2048 4096)
@@ -82,7 +81,10 @@ CONTEXT_SIZE=6144   # max_prompt(4096) + max_gen(1024) + 1024 headroom
 
 LLAMACPP_BIN="${LLAMACPP_BIN:-$HOME/llama.cpp/build/bin/llama-server}"
 LLAMACPP_PORT=8080
-OLLAMA_PORT=11434
+
+MLX_LM_BIN="${MLX_LM_BIN:-$HOME/Desktop/smolbenchmark/venv/bin/mlx_lm.server}"
+MLX_PORT=8080
+MLX_DIR="$HOME/mlx-models"
 
 GGUF_DIR="$HOME/gguf-models"
 POWER_PIDFILE="/tmp/blog_bench_power.pid"
@@ -90,22 +92,25 @@ RSS_PIDFILE="/tmp/blog_bench_rss.pid"
 SERVER_PIDFILE="/tmp/blog_bench_server.pid"
 REPORT_PY="/tmp/blog_report_mac.py"
 
-# ── Model table: name|quant|gguf_path|tokenizer|ctx_size ─────────────────────
+# ── Model table: name|quant|gguf_path|tokenizer|ctx_size|mlx_path ────────────
 # GGUF source notes (searched June 2025):
 #   Granite  → ibm-granite org publishes official GGUFs; 4.0-tiny is MoE so using 4.1 (dense)
 #   Nemotron → NVIDIA does NOT publish GGUFs; bartowski is the canonical community source
 #   Qwen     → Qwen org publishes official GGUFs for all three models
 #   Gemma 3  → Google publishes QAT Q4_0 only; ggml-org (llama.cpp team) has Q4_K_M for 4B/9B/12B
+# mlx_path is blank where no 4-bit MLX conversion is published (both Nemotron
+# models — mlx-community only has newer Nemotron-Nano-9B-v2/Nano-4B, not these
+# exact checkpoints) — those are skipped for --backend mlxlm.
 declare -a MODELS=(
-    "granite41-3b|Q4_K_M|$GGUF_DIR/granite41-3b-q4_k_m.gguf|ibm-granite/granite-4.1-3b|6144"
-    "granite41-8b|Q4_K_M|$GGUF_DIR/granite41-8b-q4_k_m.gguf|ibm-granite/granite-4.1-8b|6144"
-    "nemotron-mini-4b|Q4_K_M|$GGUF_DIR/nemotron-mini-4b-q4_k_m.gguf|nvidia/Nemotron-Mini-4B-Instruct|4096"
-    "nemotron-nano-8b|Q4_K_M|$GGUF_DIR/nemotron-nano-8b-q4_k_m.gguf|nvidia/Llama-3.1-Nemotron-Nano-8B-v1|6144"
-    "qwen3-4b|Q4_K_M|$GGUF_DIR/Qwen3-4B-Q4_K_M.gguf|Qwen/Qwen3-4B|6144"
-    "qwen3-8b|Q4_K_M|$GGUF_DIR/Qwen3-8B-Q4_K_M.gguf|Qwen/Qwen3-8B|6144"
-    "qwen2.5-7b|Q4_K_M|$GGUF_DIR/Qwen2.5-7B-Instruct-Q4_K_M.gguf|Qwen/Qwen2.5-7B-Instruct|6144"
-    "gemma3-4b|Q4_K_M|$GGUF_DIR/gemma3-4b-q4_k_m.gguf|google/gemma-3-4b-it|6144"
-    "gemma3-12b|Q4_K_M|$GGUF_DIR/gemma3-12b-q4_k_m.gguf|google/gemma-3-12b-it|6144"
+    "granite41-3b|Q4_K_M|$GGUF_DIR/granite41-3b-q4_k_m.gguf|ibm-granite/granite-4.1-3b|6144|$MLX_DIR/granite-4.1-3b-4bit"
+    "granite41-8b|Q4_K_M|$GGUF_DIR/granite41-8b-q4_k_m.gguf|ibm-granite/granite-4.1-8b|6144|$MLX_DIR/granite-4.1-8b-4bit"
+    "nemotron-mini-4b|Q4_K_M|$GGUF_DIR/nemotron-mini-4b-q4_k_m.gguf|nvidia/Nemotron-Mini-4B-Instruct|4096|"
+    "nemotron-nano-8b|Q4_K_M|$GGUF_DIR/nemotron-nano-8b-q4_k_m.gguf|nvidia/Llama-3.1-Nemotron-Nano-8B-v1|6144|"
+    "qwen3-4b|Q4_K_M|$GGUF_DIR/Qwen3-4B-Q4_K_M.gguf|Qwen/Qwen3-4B|6144|$MLX_DIR/Qwen3-4B-4bit"
+    "qwen3-8b|Q4_K_M|$GGUF_DIR/Qwen3-8B-Q4_K_M.gguf|Qwen/Qwen3-8B|6144|$MLX_DIR/Qwen3-8B-4bit"
+    "qwen2.5-7b|Q4_K_M|$GGUF_DIR/Qwen2.5-7B-Instruct-Q4_K_M.gguf|Qwen/Qwen2.5-7B-Instruct|6144|$MLX_DIR/Qwen2.5-7B-Instruct-4bit"
+    "gemma3-4b|Q4_K_M|$GGUF_DIR/gemma3-4b-q4_k_m.gguf|google/gemma-3-4b-it|6144|$MLX_DIR/gemma-3-4b-it-4bit"
+    "gemma3-12b|Q4_K_M|$GGUF_DIR/gemma3-12b-q4_k_m.gguf|google/gemma-3-12b-it|6144|$MLX_DIR/gemma-3-12b-it-4bit"
 )
 
 # ── GGUF download sources: local_filename -> "hf_repo hf_filename" ────────────
@@ -130,27 +135,15 @@ declare -A GGUF_SOURCES=(
     ["gemma3-12b-q4_k_m.gguf"]="ggml-org/gemma-3-12b-it-GGUF gemma-3-12b-it-Q4_K_M.gguf"
 )
 
-# ── Ollama per-model config: name -> "template_type" ─────────────────────────
-# template_type: chatml | granite | llama3 | gemma
-declare -A OLLAMA_CFG=(
-    # IBM Granite 4.1: custom role-based format with <|start_of_role|> tokens
-    ["granite41-3b"]="granite"
-    ["granite41-8b"]="granite"
-
-    # NVIDIA Nemotron-Mini 4B: standard ChatML
-    ["nemotron-mini-4b"]="chatml"
-
-    # NVIDIA Nemotron-Nano 8B: Llama 3.1 base, uses llama3 header format
-    ["nemotron-nano-8b"]="llama3"
-
-    # Qwen3 + Qwen2.5: standard ChatML, EOS=<|im_end|>
-    ["qwen3-4b"]="chatml"
-    ["qwen3-8b"]="chatml"
-    ["qwen2.5-7b"]="chatml"
-
-    # Gemma 3: no system role; BOS added by tokenizer; stop on turn tokens
-    ["gemma3-4b"]="gemma"
-    ["gemma3-12b"]="gemma"
+# ── MLX download sources: local_dirname -> hf_repo ────────────────────────────
+declare -A MLX_SOURCES=(
+    ["granite-4.1-3b-4bit"]="mlx-community/granite-4.1-3b-4bit"
+    ["granite-4.1-8b-4bit"]="mlx-community/granite-4.1-8b-4bit"
+    ["Qwen3-4B-4bit"]="mlx-community/Qwen3-4B-4bit"
+    ["Qwen3-8B-4bit"]="mlx-community/Qwen3-8B-4bit"
+    ["Qwen2.5-7B-Instruct-4bit"]="mlx-community/Qwen2.5-7B-Instruct-4bit"
+    ["gemma-3-4b-it-4bit"]="mlx-community/gemma-3-4b-it-4bit"
+    ["gemma-3-12b-it-4bit"]="mlx-community/gemma-3-12b-it-4bit"
 )
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
@@ -163,19 +156,29 @@ while [[ $# -gt 0 ]]; do
         --dry-run)    DRY_RUN=1;        shift ;;
         --resume)     RESUME_DIR="$2";  shift 2 ;;
         --no-power)   NO_POWER=1;       shift ;;
+        --stream)     STREAM_MODELS=1;  shift ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
 
-[[ "$BACKEND" =~ ^(llamacpp|ollama|both)$ ]] || \
-    { echo "ERROR: --backend must be llamacpp|ollama|both"; exit 1; }
+[[ "$BACKEND" =~ ^(llamacpp|mlxlm)$ ]] || \
+    { echo "ERROR: --backend must be llamacpp|mlxlm"; exit 1; }
+
+# ── Cache sudo for the full run (powermetrics needs it) ───────────────────────
+# Must run after argument parsing so --no-power actually skips it.
+if [ "$NO_POWER" != 1 ]; then
+    sudo -v
+    ( while true; do sudo -n -v; sleep 60; done ) &
+    SUDO_KEEPALIVE_PID=$!
+    trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true' EXIT
+fi
 
 # ── Sweep setup ───────────────────────────────────────────────────────────────
 SWEEP_DATE=$(date +%Y%m%d-%H%M)
 if [ -n "$RESUME_DIR" ]; then
     BASE_ARTIFACT="$RESUME_DIR"
 else
-    BASE_ARTIFACT="$HOME/Desktop/smolbenchmark/benchmark-mac-mini-m4/artifacts/mac-m4-${SWEEP_DATE}"
+    BASE_ARTIFACT="$HOME/Desktop/smolbenchmark/benchmark-mac-mini-m4/non-reasoning-models/artifacts/mac-m4-${SWEEP_DATE}"
 fi
 TIMING_LOG="$BASE_ARTIFACT/model_timing.log"
 
@@ -227,66 +230,138 @@ stop_combo_rss() {
     rm -f "$RSS_PIDFILE"
 }
 
-kill_llamacpp() {
+kill_server() {
     if [ -f "$SERVER_PIDFILE" ]; then
         kill "$(cat "$SERVER_PIDFILE")" 2>/dev/null || true
         rm -f "$SERVER_PIDFILE"
     fi
     pkill -f "llama-server.*$LLAMACPP_PORT" 2>/dev/null || true
+    pkill -f "mlx_lm.server.*--port $MLX_PORT" 2>/dev/null || true
     sleep 5
 }
 
-restart_ollama() {
-    local model_tag="${1:-}"
-    log "  [!] Attempting Ollama restart..."
-    pkill -f "ollama serve" 2>/dev/null || true
-    sleep 2
-    OLLAMA_HOST=0.0.0.0 OLLAMA_FLASH_ATTENTION=1 OLLAMA_NUM_PARALLEL=1 ollama serve &>/dev/null &
-    sleep 5
-    local elapsed=0
-    while [ "$elapsed" -lt 60 ]; do
-        local code
-        code=$(curl -s "http://localhost:$OLLAMA_PORT/api/tags" --max-time 3 \
-               -o /dev/null -w "%{http_code}" 2>/dev/null || true)
-        [ "$code" = "200" ] && log "  [OK] Ollama restarted at t=${elapsed}s" && break
-        sleep 2; elapsed=$((elapsed + 2))
-    done
-    [ "$elapsed" -ge 60 ] && { log "  [FAIL] Ollama did not come back within 60s"; return 1; }
-    if [ -n "$model_tag" ]; then
-        log "  Re-warming $model_tag..."
-        curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
-            -d "{\"model\":\"$model_tag\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" \
-            --max-time 120 -o /dev/null 2>/dev/null || true
-    fi
-    return 0
-}
-
-ensure_llamacpp_alive() {
+# Launches the server for the active $BACKEND. mlx-lm has no equivalents for
+# -ngl/-t/-fa/--prio/--mlock (MLX always runs fully on GPU, no thread/priority
+# knobs). --prompt-cache-size 0 / --decode-concurrency 1 --prompt-concurrency 1
+# mirror llama.cpp's --no-cache-prompt --cache-ram 0 / --parallel 1 for a fair
+# single-request, no-cache comparison (same reasoning as the MoE benchmark).
+launch_server() {
     local model_path="$1" ctx_size="$2" srv_log="$3"
+    if [ "$BACKEND" = "llamacpp" ]; then
+        "$LLAMACPP_BIN" -m "$model_path" --host 0.0.0.0 --port "$LLAMACPP_PORT" \
+            -ngl 99 --parallel 1 -c "$ctx_size" \
+            -t 1 -fa 1 --prio 2 --mlock \
+            --no-cache-prompt --cache-ram 0 \
+            >> "$srv_log" 2>&1 &
+    else
+        "$MLX_LM_BIN" --model "$model_path" --host 0.0.0.0 --port "$MLX_PORT" \
+            --prompt-cache-size 0 \
+            --decode-concurrency 1 --prompt-concurrency 1 \
+            >> "$srv_log" 2>&1 &
+    fi
+    echo $! > "$SERVER_PIDFILE"
+}
+
+server_port() { [ "$BACKEND" = "llamacpp" ] && echo "$LLAMACPP_PORT" || echo "$MLX_PORT"; }
+
+ensure_server_alive() {
+    local model_path="$1" ctx_size="$2" srv_log="$3"
+    local port; port=$(server_port)
     local code
-    code=$(curl -s "http://localhost:$LLAMACPP_PORT/v1/models" --max-time 3 \
+    code=$(curl -s "http://localhost:$port/v1/models" --max-time 3 \
            -o /dev/null -w "%{http_code}" 2>/dev/null || true)
     [ "$code" = "200" ] && return 0
 
-    log "  [!] llama-server not responding (HTTP $code) — restarting..."
-    kill_llamacpp
+    log "  [!] server not responding (HTTP $code) — restarting..."
+    kill_server
     sleep 3
-    "$LLAMACPP_BIN" -m "$model_path" --host 0.0.0.0 --port "$LLAMACPP_PORT" \
-        -ngl 99 --parallel 1 -c "$ctx_size" \
-        -t 1 -fa 1 --prio 2 --mlock \
-        --no-cache-prompt --cache-ram 0 \
-        >> "$srv_log" 2>&1 &
-    echo $! > "$SERVER_PIDFILE"
+    launch_server "$model_path" "$ctx_size" "$srv_log"
     local elapsed=0
     while [ "$elapsed" -lt "$SERVER_STARTUP_TIMEOUT" ]; do
         sleep 2; elapsed=$((elapsed + 2))
         ! kill -0 "$(cat "$SERVER_PIDFILE" 2>/dev/null)" 2>/dev/null && \
             log "  [RESTART FAIL] server died" && return 1
-        code=$(curl -s "http://localhost:$LLAMACPP_PORT/v1/models" --max-time 3 \
+        code=$(curl -s "http://localhost:$port/v1/models" --max-time 3 \
                -o /dev/null -w "%{http_code}" 2>/dev/null || true)
         [ "$code" = "200" ] && log "  [RESTART OK] t=${elapsed}s" && return 0
     done
     log "  [RESTART FAIL] timed out after ${SERVER_STARTUP_TIMEOUT}s"; return 1
+}
+
+# ── Per-model download (used both by the upfront pre-flight and by --stream) ──
+# Downloads model index $1's weights if missing. Sets DOWNLOADED_THIS_CALL=1 if
+# a download actually happened (so --stream knows it's safe to delete
+# afterward), 0 if the file/dir was already present (never delete those).
+download_model_if_missing() {
+    local i="$1"
+    DOWNLOADED_THIS_CALL=0
+    if [ "$BACKEND" = "llamacpp" ]; then
+        local local_name; local_name=$(basename "${MODEL_PATHS[$i]}")
+        [ -z "${GGUF_SOURCES[$local_name]:-}" ] && return 0
+        local local_path="$GGUF_DIR/$local_name"
+        if [ -f "$local_path" ]; then log "  [OK]   $local_name"; return 0; fi
+        mkdir -p "$GGUF_DIR"
+        local hf_repo hf_file
+        read -r hf_repo hf_file <<< "${GGUF_SOURCES[$local_name]}"
+        log "  [DL]   $local_name  ←  $hf_repo / $hf_file"
+        if "$VENV_HF_CLI" download "$hf_repo" "$hf_file" --local-dir "$GGUF_DIR"; then
+            local tmp_path="$GGUF_DIR/$hf_file"
+            [ "$tmp_path" != "$local_path" ] && [ -f "$tmp_path" ] && mv "$tmp_path" "$local_path"
+            if [ -f "$local_path" ]; then
+                log "  [DONE] $local_name"; DOWNLOADED_THIS_CALL=1; return 0
+            else
+                log "  [FAIL] $local_name not found after download"; return 1
+            fi
+        else
+            log "  [FAIL] Could not download $local_name"; return 1
+        fi
+    else
+        local mlx_path="${MODEL_MLX_PATHS[$i]}"
+        [ -z "$mlx_path" ] && return 0
+        local local_name; local_name=$(basename "$mlx_path")
+        [ -z "${MLX_SOURCES[$local_name]:-}" ] && return 0
+        if [ -d "$mlx_path" ]; then log "  [OK]   $local_name"; return 0; fi
+        mkdir -p "$MLX_DIR"
+        local hf_repo="${MLX_SOURCES[$local_name]}"
+        log "  [DL]   $local_name  ←  $hf_repo"
+        if "$VENV_HF_CLI" download "$hf_repo" --local-dir "$mlx_path"; then
+            log "  [DONE] $local_name"; DOWNLOADED_THIS_CALL=1; return 0
+        else
+            log "  [FAIL] Could not download $local_name"; return 1
+        fi
+    fi
+}
+
+# Deletes model index $1's on-disk weights, only when --stream is active and
+# this run is the one that downloaded them (never touches a pre-existing file).
+cleanup_model_if_streamed() {
+    local i="$1"
+    [ "$STREAM_MODELS" = 1 ] || return 0
+    [ "${MODEL_WAS_DOWNLOADED:-0}" = 1 ] || return 0
+    local path
+    if [ "$BACKEND" = "llamacpp" ]; then path="${MODEL_PATHS[$i]}"; else path="${MODEL_MLX_PATHS[$i]}"; fi
+    [ -z "$path" ] && return 0
+    log "  [STREAM] Deleting $path to free disk space..."
+    rm -rf "$path"
+}
+
+# Stops the run immediately on any failure, so a broken model doesn't get
+# silently skipped while the sweep quietly continues for hours — the failure
+# is on screen (and in the tmux pane) the moment it happens, not discovered
+# after the fact in report.md. Cleans up the running server/telemetry first;
+# deliberately does NOT delete a --stream-downloaded model on abort, so it's
+# still there to inspect. Re-run with --resume to continue past whatever
+# already finished (a fixed --only <model> narrows a retry to just the failure).
+abort() {
+    log "  [ABORT] $1"
+    stop_combo_powermetrics 2>/dev/null || true
+    stop_combo_rss 2>/dev/null || true
+    kill_server 2>/dev/null || true
+    echo ""
+    echo "  ┌─────────────────────────────────────────────────────┐"
+    echo "  │  RUN STOPPED: $1"
+    echo "  └─────────────────────────────────────────────────────┘"
+    exit 1
 }
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
@@ -331,115 +406,17 @@ print(json.dumps({'model': sys.argv[1], 'messages': [{'role': 'user', 'content':
     return $((1 - pass))
 }
 
-# ── Ollama: build Modelfile content ──────────────────────────────────────────
-make_ollama_modelfile() {
-    local gguf_path="$1" tmpl_type="$2" ctx_size="$3"
-
-    printf 'FROM %s\nPARAMETER num_ctx %s\nPARAMETER num_keep -1\n' \
-        "$gguf_path" "$ctx_size"
-
-    case "$tmpl_type" in
-
-        # ── ChatML (Qwen2.5, Qwen3, Nemotron-Mini) ───────────────────────────
-        chatml)
-            cat <<'TMPL'
-PARAMETER stop "<|im_end|>"
-TEMPLATE """{{ if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
-{{ .Response }}<|im_end|>"""
-TMPL
-            ;;
-
-        # ── IBM Granite 4.0 ───────────────────────────────────────────────────
-        # Uses <|start_of_role|>/<|end_of_role|> role delimiters, EOS=<|end_of_text|>
-        # Source: ibm-granite/granite-4.0-tiny-preview-4k-instruct tokenizer_config.json
-        granite)
-            cat <<'TMPL'
-PARAMETER stop "<|end_of_text|>"
-TEMPLATE """{{ if .System }}<|start_of_role|>system<|end_of_role|>
-{{ .System }}<|end_of_text|>
-{{ end }}{{ if .Prompt }}<|start_of_role|>user<|end_of_role|>
-{{ .Prompt }}<|end_of_text|>
-{{ end }}<|start_of_role|>assistant<|end_of_role|>
-{{ .Response }}<|end_of_text|>"""
-TMPL
-            ;;
-
-        # ── Llama 3 (Nemotron-Nano 8B) ────────────────────────────────────────
-        # BOS=<|begin_of_text|> added by tokenizer.
-        # Source: meta-llama/Llama-3.1 tokenizer_config.json
-        llama3)
-            cat <<'TMPL'
-PARAMETER stop "<|eot_id|>"
-PARAMETER stop "<|start_header_id|>"
-PARAMETER stop "<|end_header_id|>"
-TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
-{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
-{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
-{{ .Response }}<|eot_id|>"""
-TMPL
-            ;;
-
-        # ── Gemma 3 ───────────────────────────────────────────────────────────
-        # No system role; BOS=<bos> added by tokenizer; role name is "model".
-        # Source: google/gemma-3-4b-it tokenizer_config.json
-        gemma)
-            cat <<'TMPL'
-PARAMETER stop "<end_of_turn>"
-PARAMETER stop "<start_of_turn>"
-TEMPLATE """{{ if .Prompt }}<start_of_turn>user
-{{ if .System }}{{ .System }}
-
-{{ end }}{{ .Prompt }}<end_of_turn>
-<start_of_turn>model
-{{ end }}{{ .Response }}<end_of_turn>"""
-TMPL
-            ;;
-
-        *)
-            log "  [ERROR] Unknown template type: $tmpl_type"
-            return 1
-            ;;
-    esac
-}
-
-# ── Ollama: import GGUF ───────────────────────────────────────────────────────
-import_ollama_model() {
-    local model_name="$1" gguf_path="$2" tmpl_type="$3" ctx_size="$4"
-    local import_tag="local-${model_name}"
-
-    if [ ! -f "$gguf_path" ]; then
-        log "  [FAIL] GGUF not found: $gguf_path" >&2
-        return 1
-    fi
-
-    log "  Importing GGUF as ${import_tag}..." >&2
-    local tmp_modelfile="/tmp/ollama_modelfile_${model_name}"
-    make_ollama_modelfile "$gguf_path" "$tmpl_type" "$ctx_size" > "$tmp_modelfile"
-    local err
-    if err=$(ollama create "$import_tag" -f "$tmp_modelfile" 2>&1); then
-        log "  [OK] Imported as $import_tag" >&2
-        echo "$import_tag"
-        return 0
-    else
-        log "  [FAIL] GGUF import failed: $(echo "$err" | head -2 | tr '\n' ' ')" >&2
-        return 1
-    fi
-}
-
 # ── Parse model table ─────────────────────────────────────────────────────────
-declare -a MODEL_NAMES MODEL_QUANTS MODEL_PATHS MODEL_TOKENIZERS MODEL_CTX_SIZES
+declare -a MODEL_NAMES MODEL_QUANTS MODEL_PATHS MODEL_TOKENIZERS MODEL_CTX_SIZES MODEL_MLX_PATHS
 
 for entry in "${MODELS[@]}"; do
-    IFS='|' read -r n q p t c <<< "$entry"
+    IFS='|' read -r n q p t c m <<< "$entry"
     MODEL_NAMES+=("$n")
     MODEL_QUANTS+=("$q")
     MODEL_PATHS+=("$p")
     MODEL_TOKENIZERS+=("$t")
     MODEL_CTX_SIZES+=("${c:-$CONTEXT_SIZE}")
+    MODEL_MLX_PATHS+=("$m")
 done
 
 # ── Print config banner ───────────────────────────────────────────────────────
@@ -458,29 +435,30 @@ echo "  Artifacts : $BASE_ARTIFACT"
 # ── Initial cleanup ───────────────────────────────────────────────────────────
 banner "Cleanup"
 pkill -f "llama-server.*$LLAMACPP_PORT" 2>/dev/null && log "killed llama-server" || true
+pkill -f "mlx_lm.server.*--port $MLX_PORT" 2>/dev/null && log "killed mlx_lm.server" || true
 stop_combo_powermetrics 2>/dev/null || true
 rm -f "$SERVER_PIDFILE"
 sleep 2
 
-# ── Pre-flight: download missing GGUFs ───────────────────────────────────────
-banner "Pre-flight: checking / downloading missing GGUFs"
-mkdir -p "$GGUF_DIR"
-for local_name in "${!GGUF_SOURCES[@]}"; do
-    local_path="$GGUF_DIR/$local_name"
-    if [ -f "$local_path" ]; then
-        log "  [OK]   $local_name"
-        continue
-    fi
-    read -r hf_repo hf_file <<< "${GGUF_SOURCES[$local_name]}"
-    log "  [DL]   $local_name  ←  $hf_repo / $hf_file"
-    if "$VENV_HF_CLI" download "$hf_repo" "$hf_file" --local-dir "$GGUF_DIR"; then
-        tmp_path="$GGUF_DIR/$hf_file"
-        [ "$tmp_path" != "$local_path" ] && [ -f "$tmp_path" ] && mv "$tmp_path" "$local_path"
-        [ -f "$local_path" ] && log "  [DONE] $local_name" || log "  [FAIL] $local_name not found after download"
-    else
-        log "  [FAIL] Could not download $local_name — model will be skipped"
-    fi
-done
+if [ "$STREAM_MODELS" = 1 ]; then
+    banner "Pre-flight: skipped (--stream downloads one model at a time inside the sweep)"
+elif [ "$BACKEND" = "llamacpp" ]; then
+    # Only fetches sources for models that pass --only, so a filtered run doesn't
+    # re-download unrelated multi-GB GGUFs for models it won't even benchmark.
+    banner "Pre-flight: checking / downloading missing GGUFs"
+    mkdir -p "$GGUF_DIR"
+    for i in "${!MODEL_NAMES[@]}"; do
+        [[ -n "$ONLY_MODEL" && "${MODEL_NAMES[$i],,}" != *"${ONLY_MODEL,,}"* ]] && continue
+        download_model_if_missing "$i" || abort "could not download ${MODEL_NAMES[$i]}"
+    done
+else
+    banner "Pre-flight: checking / downloading missing MLX models"
+    mkdir -p "$MLX_DIR"
+    for i in "${!MODEL_NAMES[@]}"; do
+        [[ -n "$ONLY_MODEL" && "${MODEL_NAMES[$i],,}" != *"${ONLY_MODEL,,}"* ]] && continue
+        download_model_if_missing "$i" || abort "could not download ${MODEL_NAMES[$i]}"
+    done
+fi
 
 # ── Activate aiperf venv ──────────────────────────────────────────────────────
 AIPERF_BIN="$HOME/Desktop/smolbenchmark/venv/bin/aiperf"
@@ -493,57 +471,70 @@ SKIPPED_MODELS=()
 BENCH_MODELS=()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BACKEND: llama.cpp
+# Sweep — same for llamacpp and mlxlm backends (aiperf hits an OpenAI-compatible
+# /v1/chat/completions endpoint either way)
 # ══════════════════════════════════════════════════════════════════════════════
-run_llamacpp() {
-    banner "Backend: llama.cpp"
-    [ -f "$LLAMACPP_BIN" ] || { log "[SKIP] llama-server not found: $LLAMACPP_BIN"; return; }
+run_backend() {
+    banner "Backend: $BACKEND"
+    local PORT; PORT=$(server_port)
+    if [ "$BACKEND" = "llamacpp" ]; then
+        [ -f "$LLAMACPP_BIN" ] || { log "[SKIP] llama-server not found: $LLAMACPP_BIN"; return; }
+    else
+        [ -f "$MLX_LM_BIN" ] || { log "[SKIP] mlx_lm.server not found: $MLX_LM_BIN"; return; }
+    fi
 
     for i in "${!MODEL_NAMES[@]}"; do
         local MODEL_NAME="${MODEL_NAMES[$i]}"
         local MODEL_QUANT="${MODEL_QUANTS[$i]}"
-        local MODEL_PATH="${MODEL_PATHS[$i]}"
         local MODEL_TOKENIZER="${MODEL_TOKENIZERS[$i]}"
         local MODEL_CTX_SIZE="${MODEL_CTX_SIZES[$i]}"
+        local MODEL_PATH MODEL_TAG
+        if [ "$BACKEND" = "llamacpp" ]; then
+            MODEL_PATH="${MODEL_PATHS[$i]}"
+            MODEL_TAG="$MODEL_NAME"   # llama-server ignores the "model" field, any tag works
+        else
+            MODEL_PATH="${MODEL_MLX_PATHS[$i]}"
+            MODEL_TAG="$MODEL_PATH"   # mlx_lm.server routes multi-model requests by exact path match
+        fi
 
         [[ -n "$ONLY_MODEL" && "${MODEL_NAME,,}" != *"${ONLY_MODEL,,}"* ]] && continue
-        [ "$DRY_RUN" = 1 ] && { log "[DRY RUN] llamacpp: $MODEL_NAME  path=$([ -f "$MODEL_PATH" ] && echo OK || echo MISSING)"; continue; }
+        [ -z "$MODEL_PATH" ] && { log "[SKIP] $BACKEND: $MODEL_NAME — no path configured for this backend"; continue; }
+        [ "$DRY_RUN" = 1 ] && { log "[DRY RUN] $BACKEND: $MODEL_NAME  path=$([ -e "$MODEL_PATH" ] && echo OK || echo MISSING)"; continue; }
 
         local missing=0
         for G in "${GEN_LENGTHS[@]}"; do
             for P in "${PROMPT_LENGTHS[@]}"; do
-                [ ! -f "$BASE_ARTIFACT/llamacpp/$MODEL_NAME/gen${G}/ctx${P}/profile_export_aiperf.json" ] && \
+                [ ! -f "$BASE_ARTIFACT/$BACKEND/$MODEL_NAME/gen${G}/ctx${P}/profile_export_aiperf.json" ] && \
                     missing=$((missing + 1))
             done
         done
         if [ "$missing" = 0 ]; then
-            log "  [RESUME SKIP] llamacpp/$MODEL_NAME — all combos done"
-            BENCH_MODELS+=("llamacpp:$i")
+            log "  [RESUME SKIP] $BACKEND/$MODEL_NAME — all combos done"
+            BENCH_MODELS+=("$BACKEND:$i")
             continue
         fi
 
         echo ""
         echo "  ┌─────────────────────────────────────────────────────┐"
-        printf "  │  llamacpp / %-40s│\n" "$MODEL_NAME ($MODEL_QUANT)"
+        printf "  │  %-8s / %-40s│\n" "$BACKEND" "$MODEL_NAME ($MODEL_QUANT)"
         printf "  │  ctx=%-47s│\n" "$MODEL_CTX_SIZE"
         echo "  └─────────────────────────────────────────────────────┘"
 
-        if [ ! -f "$MODEL_PATH" ]; then
-            log "  [SKIP] GGUF not found: $MODEL_PATH"
-            SKIPPED_MODELS+=("llamacpp:$MODEL_NAME (file not found)")
-            continue
+        local MODEL_WAS_DOWNLOADED=0
+        if [ "$STREAM_MODELS" = 1 ]; then
+            log "  [STREAM] Downloading $MODEL_NAME..."
+            download_model_if_missing "$i" || abort "could not download $MODEL_NAME"
+            MODEL_WAS_DOWNLOADED=$DOWNLOADED_THIS_CALL
         fi
 
-        local SERVER_LOG="$BASE_ARTIFACT/llamacpp/${MODEL_NAME}-server.log"
+        if [ ! -e "$MODEL_PATH" ]; then
+            abort "$MODEL_NAME model not found: $MODEL_PATH"
+        fi
+
+        local SERVER_LOG="$BASE_ARTIFACT/$BACKEND/${MODEL_NAME}-server.log"
         mkdir -p "$(dirname "$SERVER_LOG")"
-        log "Launching llama-server on :$LLAMACPP_PORT..."
-        "$LLAMACPP_BIN" -m "$MODEL_PATH" \
-            --host 0.0.0.0 --port "$LLAMACPP_PORT" \
-            -ngl 99 --parallel 1 -c "$MODEL_CTX_SIZE" \
-            -t 1 -fa 1 --prio 2 --mlock \
-            --no-cache-prompt --cache-ram 0 \
-            > "$SERVER_LOG" 2>&1 &
-        echo $! > "$SERVER_PIDFILE"
+        log "Launching $BACKEND server on :$PORT..."
+        launch_server "$MODEL_PATH" "$MODEL_CTX_SIZE" "$SERVER_LOG"
         log "  PID: $(cat "$SERVER_PIDFILE")"
 
         local READY=0 ELAPSED=0
@@ -552,10 +543,10 @@ run_llamacpp() {
             if ! kill -0 "$(cat "$SERVER_PIDFILE" 2>/dev/null)" 2>/dev/null; then
                 log "  [!] Server died at t=${ELAPSED}s (OOM?)"
                 grep -E "error|OOM|failed|Metal" "$SERVER_LOG" | tail -5 | sed 's/^/      /'
-                kill_llamacpp; break
+                kill_server; break
             fi
             local CODE
-            CODE=$(curl -s "http://localhost:$LLAMACPP_PORT/v1/models" --max-time 3 \
+            CODE=$(curl -s "http://localhost:$PORT/v1/models" --max-time 3 \
                    -o /dev/null -w "%{http_code}" 2>/dev/null || true)
             if   [ "$CODE" = "200" ]; then READY=1; log "  [OK] HTTP 200 at t=${ELAPSED}s"; break
             elif [ "$CODE" = "503" ]; then log "  t=${ELAPSED}s: loading weights..."
@@ -563,53 +554,47 @@ run_llamacpp() {
         done
 
         if [ "$READY" = 0 ]; then
-            log "  [FAIL] $MODEL_NAME — server did not start"
-            SKIPPED_MODELS+=("llamacpp:$MODEL_NAME (server failed)")
-            kill_llamacpp; continue
+            abort "$MODEL_NAME server did not start"
         fi
 
         if [ "$SKIP_SMOKE" = 1 ]; then
             log "  [SMOKE SKIP]"
         else
-            if ! smoke_test "http://localhost:$LLAMACPP_PORT" "$MODEL_NAME"; then
-                log "  [SMOKE FAIL] $MODEL_NAME — skipping"
-                SKIPPED_MODELS+=("llamacpp:$MODEL_NAME (smoke failed)")
-                kill_llamacpp; continue
+            if ! smoke_test "http://localhost:$PORT" "$MODEL_TAG"; then
+                abort "$MODEL_NAME failed smoke test"
             fi
             log "  [SMOKE PASS]"
         fi
 
-        BENCH_MODELS+=("llamacpp:$i")
+        BENCH_MODELS+=("$BACKEND:$i")
 
         local RUN_NUM=0
         local TOTAL_RUNS=$(( ${#GEN_LENGTHS[@]} * ${#PROMPT_LENGTHS[@]} ))
         for GEN in "${GEN_LENGTHS[@]}"; do
             for CTX in "${PROMPT_LENGTHS[@]}"; do
                 RUN_NUM=$((RUN_NUM + 1))
-                local ARTIFACT_DIR="$BASE_ARTIFACT/llamacpp/$MODEL_NAME/gen${GEN}/ctx${CTX}"
+                local ARTIFACT_DIR="$BASE_ARTIFACT/$BACKEND/$MODEL_NAME/gen${GEN}/ctx${CTX}"
                 mkdir -p "$ARTIFACT_DIR"
                 [ -f "$ARTIFACT_DIR/profile_export_aiperf.json" ] && \
                     { log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX gen=$GEN  [RESUME SKIP]"; continue; }
                 [ "$CTX" -ge "$MODEL_CTX_SIZE" ] && \
                     { log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX gen=$GEN  [SKIP: prompt >= ctx_size $MODEL_CTX_SIZE]"; continue; }
                 log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX  gen=$GEN  reqs=$REQS"
-                if ! ensure_llamacpp_alive "$MODEL_PATH" "$MODEL_CTX_SIZE" "$SERVER_LOG"; then
-                    log "  [ABORT] Cannot recover server"
-                    SKIPPED_MODELS+=("llamacpp:$MODEL_NAME (server unrecoverable at gen=$GEN ctx=$CTX)")
+                if ! ensure_server_alive "$MODEL_PATH" "$MODEL_CTX_SIZE" "$SERVER_LOG"; then
                     stop_combo_powermetrics
-                    break 2
+                    abort "$MODEL_NAME server unrecoverable at gen=$GEN ctx=$CTX"
                 fi
-                printf '{"model":"%s","quant":"%s","backend":"llamacpp","gen":%d,"ctx":%d}\n' \
-                    "$MODEL_NAME" "$MODEL_QUANT" "$GEN" "$CTX" > "$ARTIFACT_DIR/combo_info.json"
+                printf '{"model":"%s","quant":"%s","backend":"%s","gen":%d,"ctx":%d}\n' \
+                    "$MODEL_NAME" "$MODEL_QUANT" "$BACKEND" "$GEN" "$CTX" > "$ARTIFACT_DIR/combo_info.json"
                 start_combo_powermetrics "$ARTIFACT_DIR"
                 start_combo_rss "$ARTIFACT_DIR" "$(cat "$SERVER_PIDFILE")"
                 # TERM=dumb prevents textual from reading mouse/special bytes that
                 # cause UnicodeDecodeError in its input thread inside tmux
                 TERM=dumb "$AIPERF_BIN" profile \
-                    --model                         "$MODEL_NAME" \
+                    --model                         "$MODEL_TAG" \
                     --streaming \
                     --endpoint-type                 'chat' \
-                    --url                           "http://localhost:$LLAMACPP_PORT" \
+                    --url                           "http://localhost:$PORT" \
                     --tokenizer                     "$MODEL_TOKENIZER" \
                     --synthetic-input-tokens-mean   "$CTX" \
                     --synthetic-input-tokens-stddev 0 \
@@ -620,196 +605,23 @@ run_llamacpp() {
                     --random-seed                   "$RANDOM_SEED" \
                     --request-timeout-seconds       "$REQUEST_TIMEOUT" \
                     --artifact-dir                  "$ARTIFACT_DIR" \
-                    || log "  aiperf failed (ctx=$CTX gen=$GEN)"
+                    || { stop_combo_rss; stop_combo_powermetrics; abort "$MODEL_NAME: aiperf failed at gen=$GEN ctx=$CTX"; }
                 stop_combo_rss
                 stop_combo_powermetrics
                 [ "$RUN_NUM" -lt "$TOTAL_RUNS" ] && { log "  Cooldown ${COOLDOWN_COMBO}s..."; sleep "$COOLDOWN_COMBO"; }
             done
         done
 
-        kill_llamacpp
+        kill_server
+        cleanup_model_if_streamed "$i"
         log "Cooling ${COOLDOWN_MODEL}s..."
         sleep "$COOLDOWN_MODEL"
     done
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# BACKEND: Ollama
-# ══════════════════════════════════════════════════════════════════════════════
-run_ollama() {
-    banner "Backend: Ollama"
-    command -v ollama &>/dev/null || { log "[SKIP] ollama not installed"; return; }
-
-    log "Stopping any stale llama-server..."
-    pkill -f "llama-server.*$LLAMACPP_PORT" 2>/dev/null || true
-    sleep 3
-
-    log "Ensuring Ollama daemon is running..."
-    if ! pgrep -f "ollama serve" &>/dev/null; then
-        OLLAMA_HOST=0.0.0.0 OLLAMA_FLASH_ATTENTION=1 OLLAMA_NUM_PARALLEL=1 ollama serve &>/dev/null &
-        sleep 3
-    fi
-
-    local elapsed=0
-    while [ "$elapsed" -lt 30 ]; do
-        local code
-        code=$(curl -s "http://localhost:$OLLAMA_PORT/api/tags" --max-time 3 \
-               -o /dev/null -w "%{http_code}" 2>/dev/null || true)
-        [ "$code" = "200" ] && log "  [OK] Ollama daemon ready" && break
-        sleep 2; elapsed=$((elapsed + 2))
-    done
-    [ "$elapsed" -ge 30 ] && { log "[SKIP] Ollama daemon failed to start"; return; }
-
-    for i in "${!MODEL_NAMES[@]}"; do
-        local MODEL_NAME="${MODEL_NAMES[$i]}"
-        local MODEL_QUANT="${MODEL_QUANTS[$i]}"
-        local MODEL_PATH="${MODEL_PATHS[$i]}"
-        local MODEL_TOKENIZER="${MODEL_TOKENIZERS[$i]}"
-        local MODEL_CTX_SIZE="${MODEL_CTX_SIZES[$i]}"
-
-        [[ -n "$ONLY_MODEL" && "${MODEL_NAME,,}" != *"${ONLY_MODEL,,}"* ]] && continue
-
-        if [ -z "${OLLAMA_CFG[$MODEL_NAME]+x}" ]; then
-            log "  [SKIP] No Ollama config for $MODEL_NAME"
-            continue
-        fi
-        local tmpl_type="${OLLAMA_CFG[$MODEL_NAME]}"
-
-        [ "$DRY_RUN" = 1 ] && { log "[DRY RUN] ollama: $MODEL_NAME  template=$tmpl_type"; continue; }
-
-        local missing=0
-        for G in "${GEN_LENGTHS[@]}"; do
-            for P in "${PROMPT_LENGTHS[@]}"; do
-                [ ! -f "$BASE_ARTIFACT/ollama/$MODEL_NAME/gen${G}/ctx${P}/profile_export_aiperf.json" ] && \
-                    missing=$((missing + 1))
-            done
-        done
-        if [ "$missing" = 0 ]; then
-            log "  [RESUME SKIP] ollama/$MODEL_NAME — all combos done"
-            BENCH_MODELS+=("ollama:$i")
-            continue
-        fi
-
-        echo ""
-        echo "  ┌─────────────────────────────────────────────────────┐"
-        printf "  │  ollama / %-42s│\n" "$MODEL_NAME ($MODEL_QUANT)"
-        printf "  │  template=%-42s│\n" "$tmpl_type  ctx=$MODEL_CTX_SIZE"
-        echo "  └─────────────────────────────────────────────────────┘"
-
-        local model_tag
-        if ! model_tag=$(import_ollama_model \
-                "$MODEL_NAME" "$MODEL_PATH" "$tmpl_type" "$MODEL_CTX_SIZE"); then
-            log "  [SKIP] $MODEL_NAME — GGUF import failed"
-            SKIPPED_MODELS+=("ollama:$MODEL_NAME (GGUF import failed)")
-            continue
-        fi
-
-        log "  Warmup (loading $model_tag into GPU)..."
-        curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
-            -d "{\"model\":\"$model_tag\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" \
-            --max-time 120 -o /dev/null 2>/dev/null || true
-
-        if [ "$SKIP_SMOKE" = 1 ]; then
-            log "  [SMOKE SKIP]"
-        else
-            if ! smoke_test "http://localhost:$OLLAMA_PORT" "$model_tag"; then
-                log "  [SMOKE FAIL] $MODEL_NAME — retrying once..."
-                ollama stop "$model_tag" 2>/dev/null || true
-                sleep 5
-                curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
-                    -d "{\"model\":\"$model_tag\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1}}" \
-                    --max-time 120 -o /dev/null 2>/dev/null || true
-                if ! smoke_test "http://localhost:$OLLAMA_PORT" "$model_tag"; then
-                    log "  [SMOKE FAIL x2] $MODEL_NAME — skipping"
-                    SKIPPED_MODELS+=("ollama:$MODEL_NAME (smoke failed x2)")
-                    ollama stop "$model_tag" 2>/dev/null || true
-                    sleep 5; continue
-                fi
-            fi
-            log "  [SMOKE PASS]"
-        fi
-
-        BENCH_MODELS+=("ollama:$i")
-
-        local RUN_NUM=0
-        local TOTAL_RUNS=$(( ${#GEN_LENGTHS[@]} * ${#PROMPT_LENGTHS[@]} ))
-        for GEN in "${GEN_LENGTHS[@]}"; do
-            for CTX in "${PROMPT_LENGTHS[@]}"; do
-                RUN_NUM=$((RUN_NUM + 1))
-                local ARTIFACT_DIR="$BASE_ARTIFACT/ollama/$MODEL_NAME/gen${GEN}/ctx${CTX}"
-                mkdir -p "$ARTIFACT_DIR"
-                [ -f "$ARTIFACT_DIR/profile_export_aiperf.json" ] && \
-                    { log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX gen=$GEN  [RESUME SKIP]"; continue; }
-                [ "$CTX" -ge "$MODEL_CTX_SIZE" ] && \
-                    { log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX gen=$GEN  [SKIP: prompt >= ctx_size $MODEL_CTX_SIZE]"; continue; }
-                log "  [$RUN_NUM/$TOTAL_RUNS] prompt=$CTX  gen=$GEN  reqs=$REQS"
-
-                local code
-                code=$(curl -s "http://localhost:$OLLAMA_PORT/api/tags" --max-time 5 \
-                       -o /dev/null -w "%{http_code}" 2>/dev/null || true)
-                if [ "$code" != "200" ]; then
-                    log "  [!] Ollama not responding at gen=$GEN ctx=$CTX"
-                    stop_combo_powermetrics
-                    if ! restart_ollama "$model_tag"; then
-                        log "  [ABORT] Ollama unrecoverable"
-                        SKIPPED_MODELS+=("ollama:$MODEL_NAME (ollama died at gen=$GEN ctx=$CTX)")
-                        break 2
-                    fi
-                    log "  [RECOVERED] Continuing from gen=$GEN ctx=$CTX"
-                fi
-
-                printf '{"model":"%s","quant":"%s","backend":"ollama","gen":%d,"ctx":%d}\n' \
-                    "$MODEL_NAME" "$MODEL_QUANT" "$GEN" "$CTX" > "$ARTIFACT_DIR/combo_info.json"
-                local ollama_pid
-                ollama_pid=$(pgrep -f "ollama serve" | head -1 || true)
-                start_combo_powermetrics "$ARTIFACT_DIR"
-                start_combo_rss "$ARTIFACT_DIR" "$ollama_pid"
-                TERM=dumb "$AIPERF_BIN" profile \
-                    --model                         "$model_tag" \
-                    --streaming \
-                    --endpoint-type                 'chat' \
-                    --url                           "http://localhost:$OLLAMA_PORT" \
-                    --tokenizer                     "$MODEL_TOKENIZER" \
-                    --synthetic-input-tokens-mean   "$CTX" \
-                    --synthetic-input-tokens-stddev 0 \
-                    --output-tokens-mean            "$GEN" \
-                    --request-count                 "$REQS" \
-                    --concurrency                   "$CONCURRENCY" \
-                    --slice-duration                "$SLICE_DURATION" \
-                    --random-seed                   "$RANDOM_SEED" \
-                    --request-timeout-seconds       "$REQUEST_TIMEOUT" \
-                    --artifact-dir                  "$ARTIFACT_DIR" \
-                    --use-legacy-max-tokens \
-                    || log "  aiperf failed (ctx=$CTX gen=$GEN)"
-                stop_combo_rss
-                stop_combo_powermetrics
-                [ "$RUN_NUM" -lt "$TOTAL_RUNS" ] && { log "  Cooldown ${COOLDOWN_COMBO}s..."; sleep "$COOLDOWN_COMBO"; }
-            done
-        done
-
-        log "Unloading $model_tag from GPU..."
-        curl -s "http://localhost:$OLLAMA_PORT/api/generate" \
-            -d "{\"model\":\"$model_tag\",\"keep_alive\":0,\"prompt\":\"\"}" \
-            --max-time 10 -o /dev/null 2>/dev/null || true
-        ollama stop "$model_tag" 2>/dev/null || true
-        log "Cooling ${COOLDOWN_MODEL}s..."
-        sleep "$COOLDOWN_MODEL"
-    done
-}
-
-# ── Run backends ──────────────────────────────────────────────────────────────
-banner "Running benchmarks (backend=$BACKEND)"
-
-case "$BACKEND" in
-    llamacpp) run_llamacpp ;;
-    ollama)   run_ollama ;;
-    both)
-        run_llamacpp
-        log "Backend cooldown ${COOLDOWN_BACKEND}s before Ollama..."
-        sleep "$COOLDOWN_BACKEND"
-        run_ollama
-        ;;
-esac
+# ── Run ───────────────────────────────────────────────────────────────────────
+banner "Running benchmarks"
+run_backend
 
 stop_combo_powermetrics
 
