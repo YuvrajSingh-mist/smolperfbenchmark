@@ -54,7 +54,24 @@ MDL = {
     "gemma4-e2b":            "gemma4-\ne2b",
     "gemma4-e4b":            "gemma4-\ne4b",
 }
-MDL_FLAT = {k: k for k in MDL}  # single-line, no injected space (was v.replace("\n", " "))
+# Total / active (Gemma: "effective") parameters in billions, verified against each
+# model's official HF model card (not inferred from the "-A0.6B"/"-A1B"/"E2B" name
+# suffixes, which don't always match — e.g. LFM2.5-8B-A1B is actually 8.3B/1.5B).
+MDL_PARAMS = {
+    "granite4-h-tiny":       (7,   1),
+    "lfm2.5-8b-a1b":         (8.3, 1.5),
+    "smallthinker-4b-a0.6b": (4,   0.6),
+    "trinity-nano":          (6,   1),
+    "gemma4-e2b":            (5.1, 2.3),
+    "gemma4-e4b":            (8,   4.5),
+}
+
+
+def _fmt_b(v):
+    return f"{v:g}"
+
+
+MDL_FLAT = {k: f"{k} ({_fmt_b(t)}B={_fmt_b(a)}B)" for k, (t, a) in MDL_PARAMS.items()}
 
 PROMPT_LENGTHS = [256, 512, 1024, 2048, 4096, 30720]
 GEN_LENGTHS    = [256, 512, 1024]
@@ -336,7 +353,13 @@ for gen_val in GEN_LENGTHS:
 # Solid fill = llama.cpp (all 6 models); hatched fill = MLX-LM (3 shared models
 # only — the other 3 models simply have no second bar, matching the "Backend
 # coverage caveat" in BLOG.md).
-def bar_chart_dual(values_lc, values_mlx, ylabel, title, fname, fmt="{:.2f}"):
+def bar_chart_dual(values_lc, values_mlx, ylabel, title, fname, fmt="{:.2f}",
+                    combo_lc=None, combo_mlx=None):
+    # combo_lc / combo_mlx (optional): {model: "ctx/gen"} label of which cell in the
+    # sweep produced that bar's value - drawn as a smaller line under the value, so
+    # "best across all combos" bars don't leave the reader guessing which combo won.
+    combo_lc = combo_lc or {}
+    combo_mlx = combo_mlx or {}
     fig, ax = plt.subplots(figsize=(10, 6.5))
     w = 0.36
     vals_lc  = [values_lc.get(m, np.nan) for m in MODELS]
@@ -346,21 +369,33 @@ def bar_chart_dual(values_lc, values_mlx, ylabel, title, fname, fmt="{:.2f}"):
     off = w / 2 if has_mlx else 0
     bars_lc = ax.bar(x - off, vals_lc, w, color=cols, edgecolor="white", linewidth=0.8,
                       label="llama.cpp")
-    for bar, v in zip(bars_lc, vals_lc):
+    for bar, v, m in zip(bars_lc, vals_lc, MODELS):
         if not (v is None or (isinstance(v, float) and np.isnan(v))):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                    fmt.format(v), ha="center", va="bottom", fontsize=9, fontweight="bold")
+            cx = bar.get_x() + bar.get_width() / 2
+            ax.annotate(fmt.format(v), (cx, v), xytext=(0, 3), textcoords="offset points",
+                        ha="center", va="bottom", fontsize=9, fontweight="bold")
+            if m in combo_lc:
+                ax.annotate(f"@ {combo_lc[m]}", (cx, v), xytext=(0, 16), textcoords="offset points",
+                            ha="center", va="bottom", fontsize=7, color="dimgray")
     if has_mlx:
         bars_mlx = ax.bar(x + off, vals_mlx, w, color=cols, edgecolor="black", linewidth=0.9,
                            hatch="//", alpha=BACKEND_ALPHA["mlxlm"], label="MLX-LM")
-        for bar, v in zip(bars_mlx, vals_mlx):
+        for bar, v, m in zip(bars_mlx, vals_mlx, MODELS):
             if not (v is None or (isinstance(v, float) and np.isnan(v))):
-                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                        fmt.format(v), ha="center", va="bottom", fontsize=9, fontweight="bold")
+                cx = bar.get_x() + bar.get_width() / 2
+                ax.annotate(fmt.format(v), (cx, v), xytext=(0, 3), textcoords="offset points",
+                            ha="center", va="bottom", fontsize=9, fontweight="bold")
+                if m in combo_mlx:
+                    ax.annotate(f"@ {combo_mlx[m]}", (cx, v), xytext=(0, 16), textcoords="offset points",
+                                ha="center", va="bottom", fontsize=7, color="dimgray")
     ax.set_xticks(x)
     ax.set_xticklabels([MDL_FLAT[m] for m in MODELS], rotation=15, ha="right", fontsize=9)
     ax.set_title(title, fontweight="bold", fontsize=12)
     ax.set_ylabel(ylabel)
+    if combo_lc or combo_mlx:
+        all_vals = [v for v in vals_lc + vals_mlx if not (v is None or (isinstance(v, float) and np.isnan(v)))]
+        if all_vals:
+            ax.set_ylim(0, max(all_vals) * 1.22)
     if has_mlx:
         ax.legend(fontsize=9)
     plt.tight_layout()
@@ -372,9 +407,28 @@ print("\n-- Bar charts (both backends) --")
 # 3. Best output tok/J per model (search across all combos)
 best_tokj_lc  = df_lc.groupby("model")["tok_j"].max().to_dict()
 best_tokj_mlx = df_mlx.groupby("model")["tok_j"].max().to_dict()
+
+
+def best_combo_labels(df_sub):
+    # Which (prompt, gen) cell produced each model's max tok_j - "ctx/gen" label,
+    # e.g. "256/512", so a "best across all combos" bar says which combo won.
+    sub = df_sub.dropna(subset=["tok_j"])
+    if sub.empty:
+        return {}
+    idx = sub.groupby("model")["tok_j"].idxmax()
+    out = {}
+    for model, i in idx.items():
+        row = sub.loc[i]
+        ctx_label = PROMPT_LABEL_MAP.get(int(row.prompt), str(int(row.prompt)))
+        out[model] = f"{ctx_label}/{int(row.gen)}"
+    return out
+
+
+combo_lc  = best_combo_labels(df_lc)
+combo_mlx = best_combo_labels(df_mlx)
 bar_chart_dual(best_tokj_lc, best_tokj_mlx, "Output Tok/J",
                "Best Output Tok/J per Model (searched across all combos) — llama.cpp vs MLX-LM",
-               "3_best_tok_j_bar.png")
+               "3_best_tok_j_bar.png", combo_lc=combo_lc, combo_mlx=combo_mlx)
 
 # 4. Average total power per model
 avg_pw_lc  = df_lc.groupby("model")["total_pw"].mean().to_dict()

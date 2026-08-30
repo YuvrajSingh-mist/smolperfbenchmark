@@ -44,7 +44,24 @@ MODELS = [
 ]
 MLXLM_MODELS = ["granite4-h-tiny", "lfm2.5-8b-a1b", "trinity-nano"]  # only 3 have MLX weights
 
-MDL_FLAT = {m: m for m in MODELS}
+# Total / active (Gemma: "effective") parameters in billions, verified against each
+# model's official HF model card (not inferred from the "-A0.6B"/"-A1B"/"E2B" name
+# suffixes, which don't always match — e.g. LFM2.5-8B-A1B is actually 8.3B/1.5B).
+MDL_PARAMS = {
+    "granite4-h-tiny":       (7,   1),
+    "lfm2.5-8b-a1b":         (8.3, 1.5),
+    "smallthinker-4b-a0.6b": (4,   0.6),
+    "trinity-nano":          (6,   1),
+    "gemma4-e2b":            (5.1, 2.3),
+    "gemma4-e4b":            (8,   4.5),
+}
+
+
+def _fmt_b(v):
+    return f"{v:g}"
+
+
+MDL_FLAT = {m: f"{m} ({_fmt_b(t)}B={_fmt_b(a)}B)" for m, (t, a) in MDL_PARAMS.items()}
 MODEL_PAL = dict(zip(MODELS, sns.color_palette("tab10", len(MODELS))))
 MODEL_MARKER = dict(zip(MODELS, ["o", "s", "^", "D", "v", "P"]))
 

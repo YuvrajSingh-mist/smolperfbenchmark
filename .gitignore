@@ -13,8 +13,8 @@ gguf-models/
 artifacts/
 **/artifacts/
 
-# Generated blog posts (published separately; not committed to this repo)
-BLOG.md
+# # Generated blog posts (published separately; not committed to this repo)
+# BLOG.md
 
 # Python
 venv/
