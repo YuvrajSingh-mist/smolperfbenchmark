@@ -319,8 +319,17 @@ for json_path in sorted(glob.glob(f"{base_dir}/**/profile_export_aiperf.json", r
     ttft_p90 = (d.get("time_to_first_token") or {}).get("p90")
     ttft_p99 = (d.get("time_to_first_token") or {}).get("p99")
     itl    = get_avg(d, "inter_token_latency", "itl")
+    itl_p50 = (d.get("inter_token_latency") or {}).get("p50")
+    itl_p90 = (d.get("inter_token_latency") or {}).get("p90")
+    itl_p99 = (d.get("inter_token_latency") or {}).get("p99")
     tps    = get_avg(d, "output_token_throughput_per_user", "output_token_throughput", "tps")
+    # Prefill (prompt-processing) throughput — input tok/s during the prefill phase.
+    prefill = get_avg(d, "prefill_throughput_per_user", "prefill_throughput",
+                      "prompt_token_throughput_per_user", "prompt_token_throughput", "prefill")
     req_lat = get_avg(d, "request_latency")
+    req_p50 = (d.get("request_latency") or {}).get("p50")
+    req_p90 = (d.get("request_latency") or {}).get("p90")
+    req_p99 = (d.get("request_latency") or {}).get("p99")
 
     # Thermal for this specific combo window
     iter_key = (model_name, gen, ctx)
@@ -366,8 +375,15 @@ for json_path in sorted(glob.glob(f"{base_dir}/**/profile_export_aiperf.json", r
         "ttft_p90":     ttft_p90,
         "ttft_p99":     ttft_p99,
         "itl_avg":      itl,
+        "itl_p50":      itl_p50,
+        "itl_p90":      itl_p90,
+        "itl_p99":      itl_p99,
         "tps":          tps,
+        "prefill":      prefill,
         "req_lat":      req_lat,
+        "req_p50":      req_p50,
+        "req_p90":      req_p90,
+        "req_p99":      req_p99,
         "peak_cpu_c":   peak_cpu,
         "peak_ap_c":    peak_ap,
         "peak_chg_c":   peak_charger,
@@ -441,8 +457,8 @@ if skipped:
 # Full results table
 L("## Full Results")
 L()
-L("| Model | Prompt (tok) | Gen (tok) | TTFT avg (ms) | TTFT p50 (ms) | TTFT p90 (ms) | ITL avg (ms) | Tok/s | CPU (°C) | AP die (°C) | Charger (°C) | Battery (°C) | Throttled |")
-L("|-------|:---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|")
+L("| Model | Prompt (tok) | Gen (tok) | TTFT avg (ms) | TTFT p50 (ms) | TTFT p90 (ms) | ITL avg (ms) | Tok/s | Prefill tok/s | CPU (°C) | AP die (°C) | Charger (°C) | Battery (°C) | Throttled |")
+L("|-------|:---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|")
 
 for r in results:
     L(
@@ -454,11 +470,37 @@ for r in results:
         f"| {fmt(r['ttft_p90'],    '.0f')} "
         f"| {fmt(r['itl_avg'],     '.2f')} "
         f"| {fmt(r['tps'],         '.2f')} "
+        f"| {fmt(r['prefill'],     '.2f')} "
         f"| {fmt(r['peak_cpu_c'],  '.1f')} "
         f"| {fmt(r['peak_ap_c'],   '.1f')} "
         f"| {fmt(r['peak_chg_c'],  '.1f')} "
         f"| {fmt(r['peak_batt_c'], '.1f')} "
         f"| {'⚠️ YES' if r['throttled'] else 'No'} |"
+    )
+
+L()
+
+# Latency percentile breakdown (tail-latency view; all times in ms). Surfaces
+# the p90/p99 values aiperf already records but the main table omits.
+L("## Latency Percentiles (per combo, ms)")
+L()
+L("| Model | Prompt | Gen | TTFT p50 | TTFT p90 | TTFT p99 | ITL p50 | ITL p90 | ITL p99 | Req p50 | Req p90 | Req p99 |")
+L("|-------|:---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+
+for r in results:
+    L(
+        f"| {r['model']} "
+        f"| {r['ctx']} "
+        f"| {r['gen']} "
+        f"| {fmt(r['ttft_p50'], '.0f')} "
+        f"| {fmt(r['ttft_p90'], '.0f')} "
+        f"| {fmt(r['ttft_p99'], '.0f')} "
+        f"| {fmt(r['itl_p50'],  '.2f')} "
+        f"| {fmt(r['itl_p90'],  '.2f')} "
+        f"| {fmt(r['itl_p99'],  '.2f')} "
+        f"| {fmt(r['req_p50'],  '.0f')} "
+        f"| {fmt(r['req_p90'],  '.0f')} "
+        f"| {fmt(r['req_p99'],  '.0f')} |"
     )
 
 L()
