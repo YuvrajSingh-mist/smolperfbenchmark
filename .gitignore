@@ -1,6 +1,10 @@
 # Vendored source trees (llama.cpp clone, blis, etc.)
 benchmark-mobile/llama.cpp/
 benchmark-mobile/blis/
+benchmark-mobile/TinyBench/
+
+# Local copy/sync noise
+.smol_copy_failures.log
 
 # Model weights
 *.gguf
