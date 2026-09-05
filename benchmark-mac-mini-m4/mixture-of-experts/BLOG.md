@@ -74,25 +74,26 @@ The canonical-cell results are summarized in [Table 1](#table-1) for llama.cpp a
 <a id="table-1"></a>
 **Table 1: Throughput and efficiency at the canonical cell (ctx=30720, gen=1024) - llama.cpp, all 6 models**
 
-| Model | <a href="#appendix-i1" style="color:inherit;text-decoration:none"><code>Output Tok/s</code></a> | <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>Output Tok/J</code></a> | [Peak RAM](#appendix-i13) (MB) |
-|-------|-------------:|-------------:|-------------:|
-| lfm2.5-8b-a1b          | **63.73** | 1.0251 | 5473 |
-| trinity-nano           | 61.08     | **1.2403** | 4543 |
-| smallthinker-4b-a0.6b  | 55.04     | 0.8358 | 3716 |
-| granite4-h-tiny        | 45.45     | 0.7829 | 4706 |
-| gemma4-e2b             | 42.04     | 0.6760 | 3448 |
-| gemma4-e4b             | 22.53     | 0.4063 | 5592 |
+| Model | Total Params | Active Params | <a href="#appendix-i1" style="color:inherit;text-decoration:none"><code>Output Tok/s</code></a> | <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>Output Tok/J</code></a> | [Peak RAM](#appendix-i13) (MB) |
+|-------|--------:|--------:|-------------:|-------------:|-------------:|
+| lfm2.5-8b-a1b          | 8.3B | 1.5B | **63.73** | 1.0251 | 5473 |
+| trinity-nano           | 6B   | 1B   | 61.08     | **1.2403** | 4543 |
+| smallthinker-4b-a0.6b  | 4B   | 0.6B | 55.04     | 0.8358 | 3716 |
+| granite4-h-tiny        | 7B   | 1B   | 45.45     | 0.7829 | 4706 |
+| gemma4-e2b             | 5.1B | 2.3B | 42.04     | 0.6760 | 3448 |
+| gemma4-e4b             | 8B   | 4.5B | 22.53     | 0.4063 | 5592 |
+> Why is `trinity-nano` performing better than `granite4-h-tiny` in terms of [decode tok/J](#appendix-i6)? The reason is that `granite4-h-tiny` has a higher [decode power](#appendix-i5) (16.20 W) than `trinity-nano` (16.09 W), which results in lower energy efficiency despite having a similar [tok/s](#appendix-i1).
 
 <a id="table-2"></a>
 **Table 2: Same cell, MLX-LM (3 models with published MLX weights)**
 
-| Model | <a href="#appendix-i1" style="color:inherit;text-decoration:none"><code>Output Tok/s</code></a> | <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>Output Tok/J</code></a> | [Peak RAM](#appendix-i13) (MB) |
-|-------|-------------:|-------------:|-------------:|
-| granite4-h-tiny | **59.41** | **0.9597** | 3683 |
-| trinity-nano    | 55.11     | 1.1992     | 3712 |
-| lfm2.5-8b-a1b   | 54.99     | 0.9155     | 4500 |
+| Model | Total Params | Active Params | <a href="#appendix-i1" style="color:inherit;text-decoration:none"><code>Output Tok/s</code></a> | <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>Output Tok/J</code></a> | [Peak RAM](#appendix-i13) (MB) |
+|-------|--------:|--------:|-------------:|-------------:|-------------:|
+| granite4-h-tiny | 7B   | 1B   | **59.41** | **0.9597** | 3683 |
+| trinity-nano    | 6B   | 1B   | 55.11     | 1.1992     | 3712 |
+| lfm2.5-8b-a1b   | 8.3B | 1.5B | 54.99     | 0.9155     | 4500 |
 
-† [Output tok/J](#appendix-i3) = [`OSL`](#appendix-i1) ÷ ([`decode_power_W`](#appendix-i5) × [<code>p50_decode_s</code>](#appendix-i1)) - decode-phase energy only, using per-request timestamps from `profile_export.jsonl`.
+<!-- † [Output tok/J](#appendix-i3) = [`OSL`](#appendix-i1) ÷ ([`decode_power_W`](#appendix-i5) × [<code>p50_decode_s</code>](#appendix-i1)) - decode-phase energy only, using per-request timestamps from `profile_export.jsonl`. -->
 
 ## 1. Test Setup
 
@@ -153,7 +154,7 @@ The exact runtime versions and launch details are listed in [Table 4](#table-4).
 
 ‡ From each model's `config.json` (expert counts, `layer_types`, and architectures field), not inferred from naming alone.
 
-**Four of six are sparse MoE; the two Gemma-4 models are dense, not MoE.** Granite-4.0-H-Tiny, Trinity-Nano-Preview, LFM2.5-8B-A1B, and SmallThinker-4B-A0.6B all route tokens through a top-k expert subset (see the Architecture column for each one's expert count/top-k). **Gemma-4-E2B/E4B have no expert-routing fields at all** in their config - their `E2B`/`E4B` naming follows Gemma 3n's Effective-Parameter convention for elastic-capacity *dense* models (MatFormer nesting + Per-Layer Embeddings), not mixture-of-experts. Grouping all six under "MoE / hybrid-MoE" earlier in this doc was inaccurate for the Gemma-4 pair specifically - corrected here. Trinity-Nano-Preview's model card states 6B total / 1B active (~800M non-embedding active per token) - despite the "-Preview" tag, this is a published figure, not an estimate.
+**Four of six are sparse MoE; the two Gemma-4 models are dense, not MoE.** Granite-4.0-H-Tiny, Trinity-Nano-Preview, LFM2.5-8B-A1B, and SmallThinker-4B-A0.6B all route tokens through a top-k expert subset (see the Architecture column for each one's expert count/top-k). **Gemma-4-E2B/E4B have no expert-routing fields at all** in their config - their `E2B`/`E4B` naming follows Gemma 3n's Effective-Parameter convention for elastic-capacity *dense* models (MatFormer nesting + Per-Layer Embeddings), not mixture-of-experts. Grouping all six under "MoE / hybrid-MoE" earlier in this doc was inaccurate for the Gemma-4 pair specifically - corrected here. 
 
 > **Quantization note:** every model runs **Q4_K_M** (4-bit K-quant medium) under llama.cpp; MLX-LM runs the equivalent published **4-bit** MLX conversion where one exists.
 
@@ -221,11 +222,11 @@ All charts below plot **both backends together**: llama.cpp (all 6 models) and M
 <a id="table-6"></a>
 **Table 6: llama.cpp vs MLX-LM - <a href="#appendix-i1" style="color:inherit;text-decoration:none"><code>tok/s</code></a> and <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>tok/J</code></a> ratios (llama.cpp ÷ MLX-LM), canonical cell + full-sweep range**
 
-| Model | [Tok/s](#appendix-i1) ratio (canonical) | [Tok/s](#appendix-i1) ratio (full-sweep range) | [Tok/J](#appendix-i3) ratio (canonical) | [Tok/J](#appendix-i3) ratio (full-sweep range) |
-|-------|--------:|--------:|--------:|--------:|
-| Granite-4.0-H-Tiny | 0.77× | 0.72×-0.77× | 0.82× | 0.50×-0.85× |
-| LFM2.5-8B-A1B      | **1.16×** | 1.01×-1.17× | **1.12×** | 0.75×-1.12× |
-| Trinity-Nano-Preview | **1.11×** | 1.06×-1.11× | 1.03× | 0.83×-1.03× |
+| Model | Total Params | Active Params | [Tok/s](#appendix-i1) ratio (canonical) | [Tok/s](#appendix-i1) ratio (full-sweep range) | [Tok/J](#appendix-i3) ratio (canonical) | [Tok/J](#appendix-i3) ratio (full-sweep range) |
+|-------|--------:|--------:|--------:|--------:|--------:|--------:|
+| Granite-4.0-H-Tiny | 7B   | 1B   | 0.77× | 0.72×-0.77× | 0.82× | 0.50×-0.85× |
+| LFM2.5-8B-A1B      | 8.3B | 1.5B | **1.16×** | 1.01×-1.17× | **1.12×** | 0.75×-1.12× |
+| Trinity-Nano-Preview | 6B | 1B | **1.11×** | 1.06×-1.11× | 1.03× | 0.83×-1.03× |
 
 > Granite-4.0-H-Tiny is consistently **faster under MLX-LM** on throughput - **1.3-1.4× the other way** on [tok/s](#appendix-i1) a; LFM2.5 and Trinity-Nano are consistently **faster under llama.cpp** on both [tok/s](#appendix-i1) and [tok/J](#appendix-i3), by a smaller margin. Full per-cell ratio charts are in [**Appendix C**](#appendix-c).
 
@@ -298,23 +299,23 @@ All charts below plot **both backends together**: llama.cpp (all 6 models) and M
 <a id="table-7"></a>
 **Table 7: Thermal summary - llama.cpp**
 
-| Model | Avg Total W | Throttled |
-|-------|---:|:---:|
-| gemma4-e2b            | 14.76 | No |
-| gemma4-e4b             | 15.09 | No |
-| granite4-h-tiny        | 14.37 | No |
-| lfm2.5-8b-a1b          | 14.93 | No |
-| smallthinker-4b-a0.6b  | 14.71 | No |
-| trinity-nano           | 13.44 | No |
+| Model | Total Params | Active Params | Avg Total W | Throttled |
+|-------|--------:|--------:|---:|:---:|
+| gemma4-e2b            | 5.1B | 2.3B | 14.76 | No |
+| gemma4-e4b             | 8B   | 4.5B | 15.09 | No |
+| granite4-h-tiny        | 7B   | 1B   | 14.37 | No |
+| lfm2.5-8b-a1b          | 8.3B | 1.5B | 14.93 | No |
+| smallthinker-4b-a0.6b  | 4B   | 0.6B | 14.71 | No |
+| trinity-nano           | 6B   | 1B   | 13.44 | No |
 
 <a id="table-8"></a>
 **Table 8: Thermal summary - MLX-LM**
 
-| Model | Avg Total W | Throttled |
-|-------|---:|:---:|
-| granite4-h-tiny | 12.25 | No |
-| lfm2.5-8b-a1b   | 13.97 | No |
-| trinity-nano    | 12.49 | No |
+| Model | Total Params | Active Params | Avg Total W | Throttled |
+|-------|--------:|--------:|---:|:---:|
+| granite4-h-tiny | 7B   | 1B   | 12.25 | No |
+| lfm2.5-8b-a1b   | 8.3B | 1.5B | 13.97 | No |
+| trinity-nano    | 6B   | 1B   | 12.49 | No |
 
 > macOS `powermetrics`' `thermal` sampler on the M4 does not expose a per-core junction temperature the way `tegrastats` does on Jetson, so no CPU/GPU °C columns are reported here - only the throttling flag, derived from whether decode throughput degraded mid-run. **No model throttled at any point in either sweep.**
 
@@ -343,23 +344,23 @@ Each of the 20 profiled requests in [Figure 13](#figure-13) shows up as one ramp
 <a id="table-9"></a>
 **Table 9: GPU utilization at the canonical cell, llama.cpp**
 
-| Model | Avg GPU freq while active (MHz) | GPU active residency (%) |
-|-------|---:|---:|
-| gemma4-e4b            | 1500 | 99.74 |
-| gemma4-e2b            | 1494 | 99.58 |
-| granite4-h-tiny       | 1497 | 99.57 |
-| lfm2.5-8b-a1b         | 1475 | 99.48 |
-| smallthinker-4b-a0.6b | 1453 | 99.45 |
-| trinity-nano          | 1490 | 99.19 |
+| Model | Total Params | Active Params | Avg GPU freq while active (MHz) | GPU active residency (%) |
+|-------|--------:|--------:|---:|---:|
+| gemma4-e4b            | 8B   | 4.5B | 1500 | 99.74 |
+| gemma4-e2b            | 5.1B | 2.3B | 1494 | 99.58 |
+| granite4-h-tiny       | 7B   | 1B   | 1497 | 99.57 |
+| lfm2.5-8b-a1b         | 8.3B | 1.5B | 1475 | 99.48 |
+| smallthinker-4b-a0.6b | 4B   | 0.6B | 1453 | 99.45 |
+| trinity-nano          | 6B   | 1B   | 1490 | 99.19 |
 
 <a id="table-9b"></a>
 **Table 9b: GPU utilization at the canonical cell, MLX-LM (3 shared models)**
 
-| Model | Avg GPU freq while active (MHz) | GPU active residency (%) |
-|-------|---:|---:|
-| trinity-nano          | 1503 | 96.88 |
-| lfm2.5-8b-a1b         | 1493 | 99.19 |
-| granite4-h-tiny       | 1492 | 97.82 |
+| Model | Total Params | Active Params | Avg GPU freq while active (MHz) | GPU active residency (%) |
+|-------|--------:|--------:|---:|---:|
+| trinity-nano          | 6B   | 1B   | 1503 | 96.88 |
+| lfm2.5-8b-a1b         | 8.3B | 1.5B | 1493 | 99.19 |
+| granite4-h-tiny       | 7B   | 1B   | 1492 | 97.82 |
 
 **The GPU is busy nearly the entire canonical-cell run for every model under both backends (96.9-99.7 % active residency)** - at ctx=30720 there simply isn't enough idle time between prefill and decode for the GPU to go idle mid-request. Average active clock also barely varies across models or backends (1453-1503 MHz, a 3.4 % spread) despite their 2.7× spread in [output tok/s](#appendix-i1) ([Table 1](#table-1)) - throughput differences at this cell come from how much *work per token* each architecture needs, not from the GPU running at a different clock for different models or backends. MLX-LM's active residency is 0.3-2.3 points lower than llama.cpp's for the same 3 models (granite4-h-tiny: 97.82 % vs 99.57 %, -1.75 pt; lfm2.5-8b-a1b: 99.19 % vs 99.48 %, -0.29 pt; trinity-nano: 96.88 % vs 99.19 %, -2.31 pt), consistent with MLX-LM's lower average power in [Table 8](#table-8) - marginally more idle GPU time between samples. The M4's peak GPU clock observed anywhere in this dataset is 1578 MHz; every model's canonical-cell average sits within 8 % of that ceiling, whichever backend is serving it.
 
@@ -378,23 +379,23 @@ The same canonical combo's `powermetrics` log also reports per-cluster CPU frequ
 <a id="table-10"></a>
 **Table 10: CPU cluster active residency at the canonical cell, llama.cpp**
 
-| Model | E-Cluster active (%) | P-Cluster active (%) |
-|-------|---:|---:|
-| gemma4-e4b            | 1.01 | 95.43 |
-| granite4-h-tiny       | 1.22 | 95.26 |
-| gemma4-e2b            | 1.10 | 95.32 |
-| lfm2.5-8b-a1b         | 1.25 | 95.25 |
-| smallthinker-4b-a0.6b | 1.31 | 95.24 |
-| trinity-nano          | 1.36 | 94.91 |
+| Model | Total Params | Active Params | E-Cluster active (%) | P-Cluster active (%) |
+|-------|--------:|--------:|---:|---:|
+| gemma4-e4b            | 8B   | 4.5B | 1.01 | 95.43 |
+| granite4-h-tiny       | 7B   | 1B   | 1.22 | 95.26 |
+| gemma4-e2b            | 5.1B | 2.3B | 1.10 | 95.32 |
+| lfm2.5-8b-a1b         | 8.3B | 1.5B | 1.25 | 95.25 |
+| smallthinker-4b-a0.6b | 4B   | 0.6B | 1.31 | 95.24 |
+| trinity-nano          | 6B   | 1B   | 1.36 | 94.91 |
 
 <a id="table-10b"></a>
 **Table 10b: CPU cluster active residency at the canonical cell, MLX-LM (3 shared models)**
 
-| Model | E-Cluster active (%) | P-Cluster active (%) |
-|-------|---:|---:|
-| trinity-nano          | 1.25 | 96.12 |
-| granite4-h-tiny       | 1.67 | 95.60 |
-| lfm2.5-8b-a1b         | 1.33 | 95.34 |
+| Model | Total Params | Active Params | E-Cluster active (%) | P-Cluster active (%) |
+|-------|--------:|--------:|---:|---:|
+| trinity-nano          | 6B   | 1B   | 1.25 | 96.12 |
+| granite4-h-tiny       | 7B   | 1B   | 1.67 | 95.60 |
+| lfm2.5-8b-a1b         | 8.3B | 1.5B | 1.33 | 95.34 |
 
 **Inference runs almost entirely on the 4 performance cores under both backends.** The 6 efficiency cores sit at ~1.2-1.7 % active residency for every model/backend pair - macOS's scheduler keeps llama.cpp's single-threaded serving loop (`-t 1`) and MLX-LM's request handling on the P-cluster, leaving the E-cluster for background OS work only. This mirrors the GPU picture in [2.6](#section-26): whichever resource is doing the actual token-generation work is saturated (P-cluster ~95-96 %, GPU ~97-99.7 %), while everything else on the chip is essentially untouched, for llama.cpp and MLX-LM alike.
 
@@ -464,14 +465,14 @@ What [Figure 18](#figure-18) adds is the *shape*: under **llama.cpp**, Granite-4
 <a id="table-12"></a>
 **Table 12: [Context-length retention](#appendix-i9), llama.cpp (gen=1024)**
 
-| Model | [Tok/s](#appendix-i1) @ ctx=256 | [Tok/s](#appendix-i1) @ ctx=30720 | Retained |
-|-------|---------:|---------:|---------:|
-| granite4-h-tiny        | 50.6  | 45.5 | **89.9 %** |
-| lfm2.5-8b-a1b          | 83.0  | 63.7 | 76.7 % |
-| trinity-nano           | 86.8  | 61.1 | 70.4 % |
-| gemma4-e4b             | 30.4  | 22.5 | 74.0 % |
-| gemma4-e2b             | 58.1  | 42.0 | 72.4 % |
-| smallthinker-4b-a0.6b  | 126.4 | 55.0 | **43.5 %** |
+| Model | Total Params | Active Params | [Tok/s](#appendix-i1) @ ctx=256 | [Tok/s](#appendix-i1) @ ctx=30720 | Retained |
+|-------|--------:|--------:|---------:|---------:|---------:|
+| granite4-h-tiny        | 7B   | 1B   | 50.6  | 45.5 | **89.9 %** |
+| lfm2.5-8b-a1b          | 8.3B | 1.5B | 83.0  | 63.7 | 76.7 % |
+| trinity-nano           | 6B   | 1B   | 86.8  | 61.1 | 70.4 % |
+| gemma4-e4b             | 8B   | 4.5B | 30.4  | 22.5 | 74.0 % |
+| gemma4-e2b             | 5.1B | 2.3B | 58.1  | 42.0 | 72.4 % |
+| smallthinker-4b-a0.6b  | 4B   | 0.6B | 126.4 | 55.0 | **43.5 %** |
 
 **SmallThinker-4B-A0.6B wins every short-context cell but loses the canonical long-context cell to LFM2.5-8B-A1B and Trinity-Nano-Preview** - it retains less than half its ctx=256 throughput by ctx=30720, the steepest drop of any model tested, while Granite-4.0-H-Tiny (the slowest model at short context) is the *most* context-stable, retaining 90 %. This is the single most important nuance in this benchmark: **"fastest model" is not a fixed label - it depends on the context length of the workload.**
 
@@ -484,25 +485,25 @@ The [retention crossover](#appendix-i9) is visualized in [Figure 7](#figure-7) a
 <a id="table-13"></a>
 **Table 13: [Best total tok/J](#appendix-i10) per model, searched across all 18 llama.cpp combos**
 
-| Model | [Best total tok/J](#appendix-i10) | At ctx / gen |
-|-------|-----------------:|---------------|
-| smallthinker-4b-a0.6b  | **32.74** | 4096 / 256 |
-| trinity-nano           | **31.29** | 4096 / 256 |
-| lfm2.5-8b-a1b          | 19.94     | 4096 / 256 |
-| gemma4-e2b             | 15.10     | 4096 / 256 |
-| granite4-h-tiny        | 15.32     | 30720 / 256 |
-| gemma4-e4b             | 7.62      | 30720 / 256 |
+| Model | Total Params | Active Params | [Best total tok/J](#appendix-i10) | At ctx / gen |
+|-------|--------:|--------:|-----------------:|---------------|
+| smallthinker-4b-a0.6b  | 4B   | 0.6B | **32.74** | 4096 / 256 |
+| trinity-nano           | 6B   | 1B   | **31.29** | 4096 / 256 |
+| lfm2.5-8b-a1b          | 8.3B | 1.5B | 19.94     | 4096 / 256 |
+| gemma4-e2b             | 5.1B | 2.3B | 15.10     | 4096 / 256 |
+| granite4-h-tiny        | 7B   | 1B   | 15.32     | 30720 / 256 |
+| gemma4-e4b             | 8B   | 4.5B | 7.62      | 30720 / 256 |
 
 > [Total tok/J](#appendix-i6) = ([`ISL`](#appendix-i1) + [`OSL`](#appendix-i1)) / (avg\_power\_W × [`RL`](#appendix-i11)\_p50\_s) - see [Appendix I.6](#appendix-i6). Peaks at long prompt / short generation for most models because the prompt dominates the numerator while decode stays cheap; Granite and Gemma-4-E4B peak at the very longest context instead, reflecting their flatter power curves.
 
 <a id="table-14"></a>
 **Table 14: [Best total tok/J](#appendix-i10) per model, MLX-LM (3 models)**
 
-| Model | [Best total tok/J](#appendix-i10) | At ctx / gen |
-|-------|-----------------:|---------------|
-| trinity-nano    | **31.47** | 4096 / 256 |
-| lfm2.5-8b-a1b   | 23.72     | 4096 / 256 |
-| granite4-h-tiny | 21.02     | 2048 / 512 |
+| Model | Total Params | Active Params | [Best total tok/J](#appendix-i10) | At ctx / gen |
+|-------|--------:|--------:|-----------------:|---------------|
+| trinity-nano    | 6B   | 1B   | **31.47** | 4096 / 256 |
+| lfm2.5-8b-a1b   | 8.3B | 1.5B | 23.72     | 4096 / 256 |
+| granite4-h-tiny | 7B   | 1B   | 21.02     | 2048 / 512 |
 
 <a id="section-34"></a>
 ### 3.4 Latency Characteristics
@@ -544,11 +545,11 @@ At the **canonical cell** (ctx=30720, gen=1024):
 <a id="table-15"></a>
 **Table 15: llama.cpp vs MLX-LM, canonical cell**
 
-| Model | llama.cpp <a href="#appendix-i1" style="color:inherit;text-decoration:none"><code>tok/s</code></a> | MLX-LM <a href="#appendix-i1" style="color:inherit;text-decoration:none"><code>tok/s</code></a> | LC ÷ MX | llama.cpp <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>tok/J</code></a> | MLX-LM <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>tok/J</code></a> | LC ÷ MX <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>tok/J</code></a> |
-|-------|---------------:|-------------:|--------:|----------------:|-------------:|----------------:|
-| Granite-4.0-H-Tiny   | 45.45 | **59.41** | 0.77× | 0.7829 | **0.9597** | 0.82× |
-| LFM2.5-8B-A1B        | **63.73** | 54.99 | **1.16×** | **1.0251** | 0.9155 | **1.12×** |
-| Trinity-Nano-Preview | **61.08** | 55.11 | **1.11×** | **1.2403** | 1.1992 | 1.03× |
+| Model | Total Params | Active Params | llama.cpp <a href="#appendix-i1" style="color:inherit;text-decoration:none"><code>tok/s</code></a> | MLX-LM <a href="#appendix-i1" style="color:inherit;text-decoration:none"><code>tok/s</code></a> | LC ÷ MX | llama.cpp <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>tok/J</code></a> | MLX-LM <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>tok/J</code></a> | LC ÷ MX <a href="#appendix-i3" style="color:inherit;text-decoration:none"><code>tok/J</code></a> |
+|-------|--------:|--------:|---------------:|-------------:|--------:|----------------:|-------------:|----------------:|
+| Granite-4.0-H-Tiny   | 7B   | 1B   | 45.45 | **59.41** | 0.77× | 0.7829 | **0.9597** | 0.82× |
+| LFM2.5-8B-A1B        | 8.3B | 1.5B | **63.73** | 54.99 | **1.16×** | **1.0251** | 0.9155 | **1.12×** |
+| Trinity-Nano-Preview | 6B   | 1B   | **61.08** | 55.11 | **1.11×** | **1.2403** | 1.1992 | 1.03× |
 
 ### 4.2 Key Observations
 
