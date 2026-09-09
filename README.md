@@ -10,6 +10,9 @@ Each subfolder is self-contained with its own benchmark scripts, chart generator
 smolbenchmark/
 ├── README.md                                # this file
 ├── LICENSE
+├── leaderboard/                             # interactive edge leaderboard (local HTML)
+│   ├── index.html
+│   └── data.json
 │
 ├── benchmark-jetson-nano-orin-super/         # NVIDIA Jetson Orin Nano Super 8GB
 │   ├── single-node/                         # single-board benchmarks
@@ -56,6 +59,23 @@ smolbenchmark/
 
 Single-board Jetson MoE benchmarks (`single-node/mixture-of-experts/`) are planned but not yet implemented.
 
+
+## Local leaderboard (dev)
+
+Interactive on-device leaderboard (Jetson, Pi 5, OnePlus 10R, Xiaomi Pad 6, Mac Mini M4 placeholders). Static HTML under `leaderboard/`. Live site: https://yuvrajsingh-mist.github.io/smolbenchmark/ — for local live-reload:
+
+```bash
+cd leaderboard
+npx --yes live-server --port=8765 --open=/index.html --watch=index.html,data.json,data.min.json
+```
+
+Then open [http://127.0.0.1:8765](http://127.0.0.1:8765). Edits to `index.html` / data JSON auto-refresh.
+
+One-shot serve (no reload):
+
+```bash
+cd leaderboard && python3 -m http.server 8765
+```
 
 ## Philosophy
 
