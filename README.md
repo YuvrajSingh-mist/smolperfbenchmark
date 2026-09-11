@@ -62,7 +62,7 @@ Single-board Jetson MoE benchmarks (`single-node/mixture-of-experts/`) are plann
 
 ## Local leaderboard (dev)
 
-Interactive on-device leaderboard (Jetson, Pi 5, OnePlus 10R, Xiaomi Pad 6, Mac Mini M4 placeholders). Static HTML under `leaderboard/`. Live site: https://yuvrajsingh-mist.github.io/smolbenchmark/ — for local live-reload:
+Interactive on-device leaderboard (Jetson live from SmolHub posts; other devices coming soon). Static HTML under `leaderboard/`. Live site: https://yuvrajsingh-mist.github.io/smolbenchmark/ — for local live-reload:
 
 ```bash
 cd leaderboard
