@@ -67,26 +67,16 @@ Interactive on-device leaderboard (Jetson live; Pi / phones / Mac still cooking)
 | | |
 |--|--|
 | **Live** | https://yuvrajsingh-mist.github.io/smolbenchmark/ |
-| **Source (private)** | [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) |
-| **This repo’s `leaderboard/`** | Public GitHub Pages publish target only — edit in the private repo |
+| **Edit here (private)** | clone [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) **outside** this repo, e.g. `~/Data/smolbenchmark-leaderboard` |
+| **This repo’s `leaderboard/`** | Publish mirror for GitHub Pages only — not the working copy |
 
-Edit and commit in the private repo. Pushes to `main` sync into this public `leaderboard/` folder (workflow `sync-public-pages.yml`).
+Free GitHub cannot host Pages from a private repo, so the private site is synced into `leaderboard/` on push (`sync-public-pages.yml`). Open the private clone in Cursor when changing the site; do not develop from this public folder.
 
 ### Preview locally
 
-From the private clone (preferred) or this repo’s `leaderboard/` copy:
-
 ```bash
-cd leaderboard   # or: cd path/to/smolbenchmark-leaderboard
+cd ~/Data/smolbenchmark-leaderboard
 npx --yes live-server --port=8001 --host=127.0.0.1 --open=/index.html --watch=index.html,data.json,data.min.json
-```
-
-Then open [http://127.0.0.1:8001](http://127.0.0.1:8001).
-
-One-shot serve (no reload):
-
-```bash
-cd leaderboard && python3 -m http.server 8001
 ```
 
 ## Philosophy
