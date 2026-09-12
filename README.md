@@ -10,7 +10,7 @@ Each subfolder is self-contained with its own benchmark scripts, chart generator
 smolbenchmark/
 ├── README.md                                # this file
 ├── LICENSE
-├── leaderboard/                             # interactive edge leaderboard (local HTML)
+├── leaderboard/                             # published site (GitHub Pages); edit in private smolbenchmark-leaderboard
 │   ├── index.html
 │   └── data.json
 │
