@@ -1722,8 +1722,8 @@ function setView(v) {
   const titles = {
     pareto: ['Models that fit in 8 GB', 'Ranked by decode speed, tokens per joule, and heat — on your own hardware: tablets, phones, Macs, Jetsons, and Pis. Jetson is live; Pi, phones, and Mac minis are still cooking. The chart is decode tok/s vs output tok/J: fast isn\'t enough if every token costs too much energy.'],
     table: ['Models that fit in 8 GB', 'Ranked by decode speed, tokens per joule, and heat — on your own hardware: tablets, phones, Macs, Jetsons, and Pis. Jetson is live; Pi, phones, and Mac minis are still cooking. The chart is decode tok/s vs output tok/J: fast isn\'t enough if every token costs too much energy.'],
-    about: ['', 'Why this leaderboard exists, what we measure, and what is still cooking.'],
-    how: ['', 'Harness, sweeps, and metrics from the smolbenchmark device READMEs.'],
+    about: ['About', 'Why this leaderboard exists, what we measure, and what is still cooking.'],
+    how: ['How it\'s done', 'Harness, sweeps, and metrics from the smolbenchmark device READMEs.'],
   };
   const [ht, hs] = titles[v] || titles.pareto;
   $('#hero-title').textContent = ht;
