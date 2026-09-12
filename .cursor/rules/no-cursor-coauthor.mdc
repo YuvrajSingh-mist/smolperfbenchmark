@@ -1,0 +1,10 @@
+---
+description: Never attribute commits or PRs to Cursor
+alwaysApply: true
+---
+
+# Authorship
+
+- Never add `Co-authored-by: Cursor` or any Cursor/agent co-author trailer.
+- Never present the agent as author or co-author in commits, PRs, or repo metadata.
+- Commits are the human repo owner's only.
