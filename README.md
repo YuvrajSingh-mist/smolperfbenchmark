@@ -66,7 +66,8 @@ Interactive on-device leaderboard (Jetson live; Pi / phones / Mac still cooking)
 
 | | |
 |--|--|
-| **Live** | https://yuvrajsingh-mist.github.io/smolbenchmark/ |
+| **Posted / stable URL (keep forever)** | https://yuvrajsingh-mist.github.io/smolbenchmark/ |
+| **Vercel** | optional host from the private repo; does not replace the posted link |
 | **Edit here (private)** | clone [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) **outside** this repo, e.g. `~/Data/smolbenchmark-leaderboard` |
 | **This repo’s `leaderboard/`** | Publish mirror for GitHub Pages only — not the working copy |
 
