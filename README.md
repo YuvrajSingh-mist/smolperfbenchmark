@@ -60,21 +60,33 @@ smolbenchmark/
 Single-board Jetson MoE benchmarks (`single-node/mixture-of-experts/`) are planned but not yet implemented.
 
 
-## Local leaderboard (dev)
+## Leaderboard site
 
-Interactive on-device leaderboard (Jetson live from SmolHub posts; other devices coming soon). Static HTML under `leaderboard/`. Live site: https://yuvrajsingh-mist.github.io/smolbenchmark/ — for local live-reload:
+Interactive on-device leaderboard (Jetson live; Pi / phones / Mac still cooking).
+
+| | |
+|--|--|
+| **Live** | https://yuvrajsingh-mist.github.io/smolbenchmark/ |
+| **Source (private)** | [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) |
+| **This repo’s `leaderboard/`** | Public GitHub Pages publish target only — edit in the private repo |
+
+Edit and commit in the private repo. Pushes to `main` sync into this public `leaderboard/` folder (workflow `sync-public-pages.yml`).
+
+### Preview locally
+
+From the private clone (preferred) or this repo’s `leaderboard/` copy:
 
 ```bash
-cd leaderboard
-npx --yes live-server --port=8765 --open=/index.html --watch=index.html,data.json,data.min.json
+cd leaderboard   # or: cd path/to/smolbenchmark-leaderboard
+npx --yes live-server --port=8001 --host=127.0.0.1 --open=/index.html --watch=index.html,data.json,data.min.json
 ```
 
-Then open [http://127.0.0.1:8765](http://127.0.0.1:8765). Edits to `index.html` / data JSON auto-refresh.
+Then open [http://127.0.0.1:8001](http://127.0.0.1:8001).
 
 One-shot serve (no reload):
 
 ```bash
-cd leaderboard && python3 -m http.server 8765
+cd leaderboard && python3 -m http.server 8001
 ```
 
 ## Philosophy
