@@ -1,6 +1,16 @@
 {
   "cleanUrls": true,
   "trailingSlash": false,
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "https://yuvrajsingh-mist.github.io/smolbenchmark/"
+    },
+    {
+      "source": "/:path*",
+      "destination": "https://yuvrajsingh-mist.github.io/smolbenchmark/:path*"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
