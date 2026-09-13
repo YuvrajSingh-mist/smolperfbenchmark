@@ -60,10 +60,13 @@ Single-board Jetson MoE benchmarks (`single-node/mixture-of-experts/`) are plann
 
 Live leaderboard: https://smolbenchmark.vercel.app/ (edit/setup: private [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) README).
 
-## Philosophy
-
-Benchmarks should be comparable across devices, reproducible with one script, and honest about measurement caveats. The key metric throughout is **output tok/J** (tokens per joule) because on consumer hardware with limited cooling and battery, energy efficiency is often the real constraint, not peak throughput.
 
 ## License
 
 MIT
+
+## Fuel the benches
+
+Perf benchmarking burns wall-clock, watts, and a lot of coffee. If these numbers helped you pick a board or a model, fuel the next run:
+
+[![Support me on Ko-fi](https://storage.ko-fi.com/cdn/kofi2.png?v=3)](https://ko-fi.com/O7W120DR8R)
