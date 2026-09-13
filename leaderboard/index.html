@@ -920,6 +920,13 @@ body.is-doc #view-explore, body.is-doc #view-table { display: none !important; }
 </aside>
 
 <script>
+const DEVICES = [
+  { id: 'jetson', name: 'Jetson Orin Nano Super', method: '', soon: false },
+  { id: 'pi5', name: 'Raspberry Pi 5', method: 'Coming soon - Pi results not published here yet.', soon: true },
+  { id: 'android', name: 'OnePlus 10R', method: 'Coming soon.', soon: true },
+  { id: 'tablet', name: 'Xiaomi Pad 6', method: 'Coming soon.', soon: true },
+  { id: 'mac', name: 'Mac Mini M4', method: 'Coming soon.', soon: true },
+];
 const DATA = [];
 async function __loadData() {
   const res = await fetch('data.min.json', { cache: 'no-store' });

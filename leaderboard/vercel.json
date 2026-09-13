@@ -3,12 +3,16 @@
   "trailingSlash": false,
   "rewrites": [
     {
-      "source": "/",
-      "destination": "https://yuvrajsingh-mist.github.io/smolbenchmark/"
+      "source": "/data.min.json",
+      "destination": "https://yuvrajsingh-mist.github.io/smolbenchmark/data.min.json"
     },
     {
-      "source": "/:path*",
-      "destination": "https://yuvrajsingh-mist.github.io/smolbenchmark/:path*"
+      "source": "/data.json",
+      "destination": "https://yuvrajsingh-mist.github.io/smolbenchmark/data.json"
+    },
+    {
+      "source": "/logos/:path*",
+      "destination": "https://yuvrajsingh-mist.github.io/smolbenchmark/logos/:path*"
     }
   ],
   "headers": [
