@@ -3,6 +3,9 @@ benchmark-mobile/llama.cpp/
 benchmark-mobile/blis/
 benchmark-mobile/TinyBench/
 
+# Private leaderboard site (own .git; push to smolbenchmark-leaderboard → Vercel)
+leaderboard-site/
+
 # Local copy/sync noise
 .smol_copy_failures.log
 

@@ -10,6 +10,12 @@ Never add `Co-authored-by: Cursor` (or any Cursor/agent co-author trailer) to co
 
 `benchmark-tablets/pipette-clients/` is a **vendored, separately-cloned copy** of an external Liquid AI Rust workspace (it has its own `.git`, and `git ls-files benchmark-tablets/` returns nothing). It is **not** part of this repo. Do not edit it as smolbenchmark source, and do not assume its `Cargo.toml` belongs to the root project. The real repo content is the 4 benchmark folders listed in the root `README.md` (Jetson, Mac Mini M4, Raspberry Pi 5, Android/mobile). Note that `benchmark-tablets/`, `AGENTS.md`, and `session-ses_fae9.md` are currently **untracked** in git.
 
+## Leaderboard site (private)
+
+- **Edit** `leaderboard-site/` (gitignored clone of private `smolbenchmark-leaderboard`). Push `main` → Vercel production (`https://smolbenchmark.vercel.app/`).
+- **Ignore** `leaderboard/` for site work — it is only a github.io redirect stub to Vercel.
+- Do not develop the site from the public harness mirror; normal GitHub users cannot change the private source.
+
 ## How to verify work
 
 There is no test suite. Results are **generated, never hand-authored** — and there are TWO distinct generation paths, don't conflate them:

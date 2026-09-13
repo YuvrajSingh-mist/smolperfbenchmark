@@ -10,7 +10,8 @@ Each subfolder is self-contained with its own benchmark scripts, chart generator
 smolbenchmark/
 ├── README.md                                # this file
 ├── LICENSE
-├── leaderboard/                             # redirect stub → Vercel; edit site in private smolbenchmark-leaderboard
+├── leaderboard/                             # redirect stub for github.io → Vercel (committed)
+├── leaderboard-site/                        # private site clone (gitignored); edit + push here
 │
 ├── benchmark-jetson-nano-orin-super/         # NVIDIA Jetson Orin Nano Super 8GB
 │   ├── single-node/                         # single-board benchmarks
@@ -66,15 +67,22 @@ Interactive on-device leaderboard (Jetson live; Pi / phones / Mac still cooking)
 |--|--|
 | **Live site** | https://smolbenchmark.vercel.app/ |
 | **Posted / stable URL** | https://yuvrajsingh-mist.github.io/smolbenchmark/ → redirects to Vercel |
-| **Edit here (private)** | clone [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) **outside** this repo, e.g. `~/Data/smolbenchmark-leaderboard` |
-| **This repo’s `leaderboard/`** | Redirect stub only — not the working copy |
+| **Edit here** | `leaderboard-site/` (local clone of private [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard); gitignored) |
+| **`leaderboard/`** | Redirect stub only — ignore for site work |
 
-Push to the private repo deploys Vercel and refreshes the github.io redirect. Open the private clone in Cursor when changing the site; do not develop from this public folder.
+Workflow: edit `leaderboard-site/` → `git push origin main` → Vercel deploys production. A private-repo workflow also refreshes the github.io redirect. Do **not** edit `leaderboard/` as the real site (public visitors cannot change the private source).
+
+### First-time setup (local clone)
+
+```bash
+cd /path/to/smolbenchmark
+git clone https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard.git leaderboard-site
+```
 
 ### Preview locally
 
 ```bash
-cd ~/Data/smolbenchmark-leaderboard
+cd leaderboard-site
 npx --yes live-server --port=8001 --host=127.0.0.1 --open=/index.html --watch=index.html,data.json,data.min.json
 ```
 
