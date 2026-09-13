@@ -10,9 +10,7 @@ Each subfolder is self-contained with its own benchmark scripts, chart generator
 smolbenchmark/
 ├── README.md                                # this file
 ├── LICENSE
-├── leaderboard/                             # published site (GitHub Pages); edit in private smolbenchmark-leaderboard
-│   ├── index.html
-│   └── data.json
+├── leaderboard/                             # redirect stub → Vercel; edit site in private smolbenchmark-leaderboard
 │
 ├── benchmark-jetson-nano-orin-super/         # NVIDIA Jetson Orin Nano Super 8GB
 │   ├── single-node/                         # single-board benchmarks
@@ -66,12 +64,12 @@ Interactive on-device leaderboard (Jetson live; Pi / phones / Mac still cooking)
 
 | | |
 |--|--|
-| **Posted / stable URL (keep forever)** | https://yuvrajsingh-mist.github.io/smolbenchmark/ |
-| **Vercel** | optional host from the private repo; does not replace the posted link |
+| **Live site** | https://smolbenchmark.vercel.app/ |
+| **Posted / stable URL** | https://yuvrajsingh-mist.github.io/smolbenchmark/ → redirects to Vercel |
 | **Edit here (private)** | clone [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) **outside** this repo, e.g. `~/Data/smolbenchmark-leaderboard` |
-| **This repo’s `leaderboard/`** | Publish mirror for GitHub Pages only — not the working copy |
+| **This repo’s `leaderboard/`** | Redirect stub only — not the working copy |
 
-Free GitHub cannot host Pages from a private repo, so the private site is synced into `leaderboard/` on push (`sync-public-pages.yml`). Open the private clone in Cursor when changing the site; do not develop from this public folder.
+Push to the private repo deploys Vercel and refreshes the github.io redirect. Open the private clone in Cursor when changing the site; do not develop from this public folder.
 
 ### Preview locally
 
