@@ -10,8 +10,8 @@ Each subfolder is self-contained with its own benchmark scripts, chart generator
 smolbenchmark/
 ├── README.md                                # this file
 ├── LICENSE
-├── leaderboard/                             # redirect stub for github.io → Vercel (committed)
-├── leaderboard-site/                        # private site clone (gitignored); edit + push here
+├── leaderboard/                             # github.io redirect stub → Vercel
+├── leaderboard-site/                        # private site clone (gitignored; see its README)
 │
 ├── benchmark-jetson-nano-orin-super/         # NVIDIA Jetson Orin Nano Super 8GB
 │   ├── single-node/                         # single-board benchmarks
@@ -58,33 +58,7 @@ smolbenchmark/
 
 Single-board Jetson MoE benchmarks (`single-node/mixture-of-experts/`) are planned but not yet implemented.
 
-
-## Leaderboard site
-
-Interactive on-device leaderboard (Jetson live; Pi / phones / Mac still cooking).
-
-| | |
-|--|--|
-| **Live site** | https://smolbenchmark.vercel.app/ |
-| **Posted / stable URL** | https://yuvrajsingh-mist.github.io/smolbenchmark/ → redirects to Vercel |
-| **Edit here** | `leaderboard-site/` (local clone of private [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard); gitignored) |
-| **`leaderboard/`** | Redirect stub only — ignore for site work |
-
-Workflow: edit `leaderboard-site/` → `git push origin main` → Vercel deploys production. A private-repo workflow also refreshes the github.io redirect. Do **not** edit `leaderboard/` as the real site (public visitors cannot change the private source).
-
-### First-time setup (local clone)
-
-```bash
-cd /path/to/smolbenchmark
-git clone https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard.git leaderboard-site
-```
-
-### Preview locally
-
-```bash
-cd leaderboard-site
-npx --yes live-server --port=8001 --host=127.0.0.1 --open=/index.html --watch=index.html,data.json,data.min.json
-```
+Live leaderboard: https://smolbenchmark.vercel.app/ (edit/setup: private [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) README).
 
 ## Philosophy
 
