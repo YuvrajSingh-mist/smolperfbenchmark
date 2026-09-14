@@ -96,6 +96,19 @@ Jetson and Raspberry Pi scripts run **on the board**. The Mac Mini folder is bot
 
 MIT
 
+## Citation
+
+If you use smolperfbenchmark — the leaderboard, harness, or results — please credit this work and cite it as:
+
+```bibtex
+@misc{singh2026smolperfbenchmark,
+      title={smolperfbenchmark: On-Device LLM Leaderboard},
+      author={Yuvraj Singh},
+      year={2026},
+      howpublished={\url{https://github.com/YuvrajSingh-mist/smolperfbenchmark}},
+}
+```
+
 ## Fuel the benches
 
 Perf benchmarking burns wall-clock, watts, and a lot of coffee. If these numbers helped you pick a board or a model, fuel the next run:

@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: If you use smolperfbenchmark (leaderboard, harness, or results), please cite it as below.
+title: "smolperfbenchmark: On-Device LLM Leaderboard"
+type: software
+authors:
+  - family-names: Singh
+    given-names: Yuvraj
+date-released: "2026-01-01"
+year: 2026
+url: "https://github.com/YuvrajSingh-mist/smolperfbenchmark"
+repository-code: "https://github.com/YuvrajSingh-mist/smolperfbenchmark"
+license: MIT
+preferred-citation:
+  type: generic
+  title: "smolperfbenchmark: On-Device LLM Leaderboard"
+  authors:
+    - family-names: Singh
+      given-names: Yuvraj
+  year: 2026
+  url: "https://github.com/YuvrajSingh-mist/smolperfbenchmark"
