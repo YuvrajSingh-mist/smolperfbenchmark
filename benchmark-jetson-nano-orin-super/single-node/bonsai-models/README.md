@@ -76,13 +76,13 @@ pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c1778
 aiperf --version   # 0.11.0
 ```
 
-Do not `pip install aiperf` from PyPI (yanked stub).
+Do not `pip install aiperf` from PyPI (yanked stub). This folder runs on the Jetson. Mac-side clone/docs were checked on a MacBook Air M1 (2020) and a Mac Mini M4 (2025) 16 GB.
 
 ### 1. Clone this benchmark repo
 
 ```bash
-git clone <this-repo>
-cd benchmark-jetson-nano-orin-super
+git clone https://github.com/YuvrajSingh-mist/smolperfbenchmark.git
+cd smolperfbenchmark/benchmark-jetson-nano-orin-super/single-node
 ```
 
 ### 2. Install Bonsai-demo (models + deps)
@@ -102,7 +102,7 @@ cd Bonsai-demo && ./setup.sh && cd ..
 The expected layout after this step:
 
 ```
-benchmark-jetson-nano-orin-super/
+benchmark-jetson-nano-orin-super/single-node/
 ├── Bonsai-demo/
 ├── bonsai-models/
 └── non-reasoning-models/
@@ -218,7 +218,7 @@ Always run inside tmux when resuming so the session survives disconnects:
 
 ```bash
 tmux new-session -d -s bonsai-bench && \
-tmux send-keys -t bonsai-bench "cd ~/Desktop/smolbenchmark/benchmark-jetson-nano-orin-super/bonsai-models && \
+tmux send-keys -t bonsai-bench "cd /path/to/smolperfbenchmark/benchmark-jetson-nano-orin-super/single-node/bonsai-models && \
 bash benchmark_all_bonsai.sh --resume artifacts/llamacpp/bonsai-llamacpp-YYYYMMDD-HHMM --power-mode 1 --reqs 20" Enter && \
 tmux attach -t bonsai-bench
 ```

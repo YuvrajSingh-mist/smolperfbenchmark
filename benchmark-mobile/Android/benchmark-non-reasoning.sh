@@ -59,6 +59,14 @@ fi
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+_first_exe() {
+    local c
+    for c in "$@"; do
+        [ -n "${c:-}" ] && [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
+    done
+    return 1
+}
 
 # Backend: cpu | vulkan | both
 # cpu    → llama-server -ngl 0  (pure Cortex-A78/A55, always works)
@@ -100,8 +108,9 @@ DEVICE_BIN_VULKAN="${DEVICE_TMP}/llama-server-vulkan" # Vulkan build (required f
 DEVICE_BIN="${DEVICE_BIN_CPU}"
 
 # Host paths
-HF_CLI="${HF_CLI:-$(which hf 2>/dev/null || echo "$HOME/.local/bin/hf")}"
-AIPERF_BIN="${AIPERF_BIN:-$(which aiperf 2>/dev/null || echo "$HOME/venv/bin/aiperf")}"
+# Host paths — clone-local venv first, then PATH
+HF_CLI="${HF_CLI:-$(_first_exe "$REPO_ROOT/venv/bin/hf" "$REPO_ROOT/.venv/bin/hf" "$HOME/Desktop/smolbenchmark/venv/bin/hf" "$HOME/venv/bin/hf" "$(command -v hf 2>/dev/null || true)")}"
+AIPERF_BIN="${AIPERF_BIN:-$(_first_exe "$REPO_ROOT/venv/bin/aiperf" "$REPO_ROOT/.venv/bin/aiperf" "$HOME/Desktop/smolbenchmark/venv/bin/aiperf" "$HOME/venv/bin/aiperf" "$(command -v aiperf 2>/dev/null || true)")}"
 
 # Artifact dirs and logfiles — resolved after arg parsing
 BASE_ARTIFACT=""

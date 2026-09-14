@@ -20,7 +20,7 @@ Throughput and energy-efficiency benchmarks for dense, instruction-tuned LLMs on
 
 | | |
 |---|---|
-| Board | Mac Mini M4 |
+| Board | Mac Mini M4 (2025) |
 | Chip | Apple M4 (10-core CPU, 10-core GPU, 16-core ANE) |
 | Memory | 16 GB unified (CPU + GPU + ANE share the same pool) |
 | Storage | NVMe SSD |
@@ -129,17 +129,19 @@ brew install ollama
 
 ### 4. Clone this repo
 
+Clone **anywhere** — Desktop is not required:
+
 ```bash
-git clone <this-repo>
-cd benchmark-mac-mini-m4
+git clone https://github.com/YuvrajSingh-mist/smolperfbenchmark.git
+cd smolperfbenchmark
 ```
 
-### 5. Set up the shared venv
+### 5. Set up the venv in the clone
 
-All Python tools (aiperf, huggingface_hub) live in one shared venv at `~/Desktop/smolbenchmark/venv/`:
+All Python tools (aiperf, huggingface_hub, MLX-LM) live in `venv/` at the **clone root** (the folder that contains `benchmark-mac-mini-m4/`). Scripts find `./venv` automatically.
 
 ```bash
-cd ~/Desktop/smolbenchmark
+# still in the clone root
 python3 -m venv venv
 source venv/bin/activate
 pip install -U pip
@@ -147,6 +149,8 @@ pip install -U "huggingface_hub"
 ```
 
 The benchmark script uses `hf download` to pull GGUFs on first run. Note: `huggingface_hub` ≥1.0 ships the CLI as `hf`, not `huggingface-cli`.
+
+Tested on **MacBook Air M1 (2020)** and **Mac Mini M4 (2025), 16 GB**.
 
 ### 6. Authenticate with Hugging Face (required for gated models)
 
@@ -164,7 +168,7 @@ Steps:
 3. Log in from this machine:
 
 ```bash
-~/Desktop/smolbenchmark/venv/bin/hf auth login
+./venv/bin/hf auth login
 # paste your token when prompted
 ```
 
@@ -175,7 +179,6 @@ This saves the token to `~/.cache/huggingface/token`, which `hf`, `aiperf`, and 
 The `aiperf` package on PyPI (`pip install aiperf`) is a yanked non-functional placeholder — do not use it. Install **0.11.0**, the git revision used for the published numbers, into the repo's shared venv:
 
 ```bash
-cd ~/Desktop/smolbenchmark
 source venv/bin/activate
 pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
 ```
@@ -183,7 +186,7 @@ pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c1778
 Verify:
 
 ```bash
-~/Desktop/smolbenchmark/venv/bin/aiperf --version
+./venv/bin/aiperf --version
 # must print 0.11.0
 ```
 
@@ -192,15 +195,15 @@ Verify:
 ## Running Benchmarks
 
 ```bash
+cd benchmark-mac-mini-m4/non-reasoning-models
 bash benchmark_non_reasoning.sh [OPTIONS]
 ```
 
-Run inside `tmux` for long sessions — the full sweep takes several hours:
+The script auto-relaunches inside tmux. Attach with `tmux attach -t non-reasoning-bench`. You can also start tmux yourself:
 
 ```bash
 tmux new-session -d -s bench && \
-tmux send-keys -t bench "cd ~/Desktop/smolbenchmark/benchmark-mac-mini-m4 && \
-bash benchmark_non_reasoning.sh" Enter && \
+tmux send-keys -t bench "cd /path/to/smolperfbenchmark/benchmark-mac-mini-m4/non-reasoning-models && bash benchmark_non_reasoning.sh" Enter && \
 tmux attach -t bench
 ```
 

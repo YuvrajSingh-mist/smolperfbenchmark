@@ -47,7 +47,7 @@ pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c1778
 aiperf --version   # 0.11.0
 ```
 
-The script tries `~/venv` first, then `~/aiperf-env`.
+The script tries `~/venv` first, then `~/aiperf-env`. These live on the **Pi**, not the Mac. Artifacts write next to this README (`./artifacts/...`), not a Desktop path. Mac-side clone/docs were checked on a MacBook Air M1 (2020) and a Mac Mini M4 (2025) 16 GB.
 
 ### HuggingFace CLI (for model auto-download)
 

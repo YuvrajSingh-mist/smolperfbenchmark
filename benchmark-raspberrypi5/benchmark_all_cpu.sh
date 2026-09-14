@@ -17,6 +17,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Pip installs user-local binaries here; add unconditionally so all sub-shells see it
 export PATH="$HOME/.local/bin:$PATH"
 
@@ -212,7 +214,7 @@ if [ -n "$RESUME_DIR" ]; then
     BASE_ARTIFACT="$RESUME_DIR"
     echo "  [RESUME] Reusing artifact dir: $BASE_ARTIFACT"
 else
-    BASE_ARTIFACT="$HOME/Desktop/smolbenchmark/benchmark-raspberrypi5/artifacts/blog-all-$(date +%Y%m%d-%H%M)"
+    BASE_ARTIFACT="$SCRIPT_DIR/artifacts/blog-all-$(date +%Y%m%d-%H%M)"
 fi
 
 

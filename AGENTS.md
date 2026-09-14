@@ -30,7 +30,7 @@ The `.sh` scripts are not unit-testable — they need real hardware, `sudo`, and
 
 ## Toolchain (venv & CLIs — paths differ per device!)
 
-- **Mac Mini + Android** use the **shared workspace venv** at `~/Desktop/smolbenchmark/venv/` (`AIPERF_BIN`/`HF_CLI` point at it — see the Android README for the exact invocation form).
+- **Mac Mini + Android** use a **venv in the clone root** (`<repo>/venv/`). Scripts search that path, then `.venv`, then `$SMOL_VENV`, then the old `~/Desktop/smolbenchmark/venv` fallback. `AIPERF_BIN`/`HF_CLI` still override. Host setup was tested on **MacBook Air M1 (2020)** and **Mac Mini M4 (2025), 16 GB**.
 - **Jetson + Pi** instead `source` `$HOME/venv/bin/activate` (fallback `$HOME/aiperf-env`) and call bare `aiperf`/`hf` from PATH — a *different* `~/venv`, not `~/Desktop/smolbenchmark/venv`.
 - `aiperf` is the load generator. The **PyPI `aiperf` is a yanked placeholder**. Pin the revision used for published numbers: **0.11.0** at `git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4` (`aiperf --version` → `0.11.0`). Requires Python ≥ 3.11; Homebrew Python is broken on macOS (libexpat), so use `uv` to build the venv.
 - HF CLI is now `hf`, not `huggingface-cli`. `hf auth login` is required for gated models (Gemma-3, Llama-3.2).

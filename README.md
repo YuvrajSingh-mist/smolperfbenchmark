@@ -70,6 +70,29 @@ pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c1778
 
 Each device README repeats this pin in its setup section. `aiperf --version` should print `0.11.0`.
 
+## Clone anywhere
+
+Clone this repo to any directory. Create the Python venv **in the clone root** (`./venv`). Scripts resolve that path themselves; you do not need `~/Desktop/smolbenchmark`.
+
+```bash
+git clone https://github.com/YuvrajSingh-mist/smolperfbenchmark.git
+cd smolperfbenchmark
+python3 -m venv venv
+source venv/bin/activate
+pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4" huggingface_hub
+```
+
+Override with `SMOL_VENV=/path/to/venv` if you keep the environment somewhere else.
+
+## Host this was tested on
+
+Harness setup (clone, venv, aiperf, Android ADB host) was run on:
+
+- MacBook Air M1 (2020)
+- Mac Mini M4 (2025), 16 GB unified memory
+
+Jetson and Raspberry Pi scripts run **on the board**. The Mac Mini folder is both a DUT and a host.
+
 
 ## License
 

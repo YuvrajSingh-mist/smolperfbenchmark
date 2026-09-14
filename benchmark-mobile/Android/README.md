@@ -28,13 +28,16 @@ Features: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp
 
 ## Host Requirements
 
+Harness host is a Mac with Homebrew. **Tested on MacBook Air M1 (2020) and Mac Mini M4 (2025), 16 GB.** Clone the repo anywhere; venv lives at `<clone>/venv`.
+
 | Tool | Install |
 |---|---|
-| macOS (tested on Mac mini M-series) | — |
+| macOS (Apple Silicon) | M1 Air / M4 Mini as above |
 | Android NDK 29 | `brew install --cask android-ndk` |
 | ADB | `brew install android-platform-tools` |
 | uv (Python manager) | `brew install uv` |
 | cmake, make | `brew install cmake` |
+| bash 4+ | `brew install bash` — use `/opt/homebrew/bin/bash`, not macOS `/bin/bash` |
 
 ---
 
@@ -58,11 +61,20 @@ If it shows `unauthorized`: unlock phone, look for the popup again. If popup doe
 
 ### 2. Set Up NDK Toolchain
 
-NDK 29 installs to `/opt/homebrew/Caskroom/android-ndk/29/`.
+NDK 29 via Homebrew. On Apple Silicon the LLVM prebuilt is `darwin-aarch64` (not `darwin-x86_64`).
 
 ```bash
-export NDK="/opt/homebrew/Caskroom/android-ndk/29/AndroidNDK14206865.app/Contents/NDK"
-export TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/darwin-x86_64"
+export NDK="${NDK:-$(brew --prefix)/share/android-ndk}"
+# cask fallback if the share symlink is missing:
+if [ ! -d "$NDK" ]; then
+  export NDK="$(echo "$(brew --prefix)/Caskroom/android-ndk"/*/AndroidNDK*.app/Contents/NDK)"
+fi
+PREBUILT="$NDK/toolchains/llvm/prebuilt"
+if [ -d "$PREBUILT/darwin-aarch64" ]; then HOST_TAG=darwin-aarch64
+elif [ -d "$PREBUILT/darwin-arm64" ]; then HOST_TAG=darwin-arm64
+else HOST_TAG=darwin-x86_64
+fi
+export TOOLCHAIN="$PREBUILT/$HOST_TAG"
 export API=29
 export CC="$TOOLCHAIN/bin/aarch64-linux-android${API}-clang"
 export AR="$TOOLCHAIN/bin/llvm-ar"
@@ -240,8 +252,6 @@ The authorization is saved. Future connections don't need the popup.
 PHONE_IP=$(adb shell ip route show dev wlan0 | awk '{print $9}')
 
 ANDROID_SERIAL="${PHONE_IP}:5555" \
-AIPERF_BIN=~/Desktop/smolbenchmark/venv/bin/aiperf \
-HF_CLI=~/Desktop/smolbenchmark/venv/bin/hf \
 /opt/homebrew/bin/bash benchmark-non-reasoning.sh --reqs 20
 ```
 
@@ -263,16 +273,14 @@ adb -s "${PHONE_IP}:5555" usb   # switch back to USB mode, then replug cable
 > Homebrew Python 3.12/3.13/3.14 are broken on macOS 15 due to a `libexpat` dylib symbol mismatch. Use `uv` which bundles its own Python and avoids the issue.
 
 ```bash
-# uv installs its own Python — no system libexpat dependency
-brew install uv
-uv venv venv --python 3.12    # run from smolbenchmark/ root
+# from the clone root — any directory is fine
+uv venv venv --python 3.12
 source venv/bin/activate
 uv pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4" \
                'huggingface_hub[hf_transfer]'
 
 # Verify — must be 0.11.0 (the revision used for published numbers)
-aiperf --version   # 0.11.0
-hf --version       # 1.19.0
+./venv/bin/aiperf --version   # 0.11.0
 ```
 
 > **Note:** The HF CLI is now `hf`, not `huggingface-cli` (deprecated).
@@ -355,30 +363,19 @@ Phase 6 — Generate Markdown report from artifact tree
 ```bash
 cd benchmark-mobile/Android
 
-# CPU only (default, 20 requests per combo)
-TMUX=bypass \
-AIPERF_BIN=~/Desktop/smolbenchmark/venv/bin/aiperf \
-HF_CLI=~/Desktop/smolbenchmark/venv/bin/hf \
-/opt/homebrew/bin/bash benchmark-non-reasoning.sh --reqs 20
+# CPU only (default, 20 requests per combo).
+# Scripts find <clone>/venv/bin/aiperf and hf — no Desktop path required.
+TMUX=bypass /opt/homebrew/bin/bash benchmark-non-reasoning.sh --reqs 20
 
 # Resume interrupted run
-TMUX=bypass \
-AIPERF_BIN=~/Desktop/smolbenchmark/venv/bin/aiperf \
-HF_CLI=~/Desktop/smolbenchmark/venv/bin/hf \
-/opt/homebrew/bin/bash benchmark-non-reasoning.sh \
+TMUX=bypass /opt/homebrew/bin/bash benchmark-non-reasoning.sh \
     --resume artifacts/android/cpu-<YYYYMMDD-HHMM> --reqs 20
 
 # Quick test — single model, 5 requests
-TMUX=bypass \
-AIPERF_BIN=~/Desktop/smolbenchmark/venv/bin/aiperf \
-HF_CLI=~/Desktop/smolbenchmark/venv/bin/hf \
-/opt/homebrew/bin/bash benchmark-non-reasoning.sh --only qwen2.5-0.5b --reqs 5
+TMUX=bypass /opt/homebrew/bin/bash benchmark-non-reasoning.sh --only qwen2.5-0.5b --reqs 5
 
 # Vulkan (requires llama-server-vulkan on device)
-TMUX=bypass \
-AIPERF_BIN=~/Desktop/smolbenchmark/venv/bin/aiperf \
-HF_CLI=~/Desktop/smolbenchmark/venv/bin/hf \
-/opt/homebrew/bin/bash benchmark-non-reasoning.sh --backend vulkan
+TMUX=bypass /opt/homebrew/bin/bash benchmark-non-reasoning.sh --backend vulkan
 
 # Dry run (no device needed)
 TMUX=bypass /opt/homebrew/bin/bash benchmark-non-reasoning.sh --dry-run
@@ -434,6 +431,6 @@ hf auth login   # paste token from hf.co/settings/tokens
 | llama-server CPU binary (host) | `benchmark-mobile/llama.cpp/build-android/bin/llama-server` |
 | llama-server on device | `/data/local/tmp/llama-server` |
 | GGUF models on device | `/data/local/tmp/models/<family>/` |
-| Python venv | `~/Desktop/smolbenchmark/venv/` (Python 3.12 via uv) |
+| Python venv | `<clone>/venv/` (Python 3.12 via uv) |
 | Benchmark script | `benchmark-mobile/Android/benchmark-non-reasoning.sh` |
 | Artifacts | `benchmark-mobile/Android/artifacts/android/` |

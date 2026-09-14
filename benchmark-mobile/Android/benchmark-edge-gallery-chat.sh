@@ -36,7 +36,7 @@
 #
 # Requirements:
 #   - adb (device authorised), fork app installed + server toggled ON in Settings
-#   - aiperf 0.13 (this repo's venv: ~/Desktop/smolbenchmark/venv/bin/aiperf)
+#   - aiperf 0.11.0 (clone-root venv: ./venv/bin/aiperf)
 
 set -euo pipefail
 
@@ -57,6 +57,14 @@ fi
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+_first_exe() {
+    local c
+    for c in "$@"; do
+        [ -n "${c:-}" ] && [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
+    done
+    return 1
+}
 
 MODEL_LABEL="Qwen2.5-1.5B-Instruct"
 BACKEND=""                 # "cpu" | "gpu" | "" (app/server default). Sent as a per-request
@@ -81,7 +89,7 @@ DETECT_PORTS="8080 8081 8082 8083 8084 8085 8086 8087 8088 8089"
 
 ADB="adb"
 SERIAL=""
-AIPERF_BIN="${AIPERF_BIN:-$(which aiperf 2>/dev/null || echo "$HOME/Desktop/smolbenchmark/venv/bin/aiperf")}"
+AIPERF_BIN="${AIPERF_BIN:-$(_first_exe "$REPO_ROOT/venv/bin/aiperf" "$REPO_ROOT/.venv/bin/aiperf" "$HOME/Desktop/smolbenchmark/venv/bin/aiperf" "$HOME/venv/bin/aiperf" "$(command -v aiperf 2>/dev/null || true)")}"
 
 BASE_ARTIFACT=""
 THERMAL_LOG=""

@@ -54,6 +54,14 @@ fi
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+_first_exe() {
+    local c
+    for c in "$@"; do
+        [ -n "${c:-}" ] && [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
+    done
+    return 1
+}
 
 BACKEND="cpu"        # cpu | vulkan | both — label only; the app's toggle sets it
 MODEL_LABEL="pipette-model"
@@ -78,8 +86,8 @@ GEN_LENGTHS=(64 128 256)
 
 ADB="adb"
 SERIAL=""
-AIPERF_BIN="${AIPERF_BIN:-$(which aiperf 2>/dev/null || echo "$HOME/venv/bin/aiperf")}"
-HF_CLI="${HF_CLI:-$(which hf 2>/dev/null || echo "$HOME/.local/bin/hf")}"
+AIPERF_BIN="${AIPERF_BIN:-$(_first_exe "$REPO_ROOT/venv/bin/aiperf" "$REPO_ROOT/.venv/bin/aiperf" "$HOME/Desktop/smolbenchmark/venv/bin/aiperf" "$HOME/venv/bin/aiperf" "$(command -v aiperf 2>/dev/null || true)")}"
+HF_CLI="${HF_CLI:-$(_first_exe "$REPO_ROOT/venv/bin/hf" "$REPO_ROOT/.venv/bin/hf" "$HOME/Desktop/smolbenchmark/venv/bin/hf" "$(command -v hf 2>/dev/null || true)")}"
 
 BASE_ARTIFACT=""
 THERMAL_LOG=""

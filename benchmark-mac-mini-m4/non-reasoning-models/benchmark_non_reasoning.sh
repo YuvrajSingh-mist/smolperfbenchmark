@@ -27,6 +27,29 @@ set -euo pipefail
 
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+_pick_venv() {
+    local d
+    for d in ${SMOL_VENV:-} "$REPO_ROOT/venv" "$REPO_ROOT/.venv" \
+             "$HOME/Desktop/smolbenchmark/venv" "$HOME/venv"; do
+        [ -n "${d:-}" ] && [ -x "$d/bin/python3" ] && { printf '%s\n' "$d"; return 0; }
+    done
+    return 1
+}
+VENV_DIR="$(_pick_venv || true)"
+if [ -z "${VENV_DIR:-}" ]; then
+    echo "ERROR: no Python venv found next to the clone."
+    echo "  From the repo root (any path is fine):"
+    echo "    python3 -m venv venv && source venv/bin/activate"
+    echo "    pip install \"git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4\" huggingface_hub"
+    exit 1
+fi
+VENV_PYTHON="$VENV_DIR/bin/python3"
+VENV_HF_CLI="$VENV_DIR/bin/hf"
+AIPERF_BIN="${AIPERF_BIN:-$VENV_DIR/bin/aiperf}"
+MLX_LM_BIN="${MLX_LM_BIN:-$VENV_DIR/bin/mlx_lm.server}"
+
 # ── Ensure tmux is installed ──────────────────────────────────────────────────
 if ! command -v tmux &>/dev/null; then
     echo "tmux not found — installing via brew..."
@@ -35,10 +58,8 @@ fi
 
 # ── Ensure hf CLI is available ────────────────────────────────────────────────
 # huggingface_hub ≥1.0 ships the CLI as `hf` (not `huggingface-cli`).
-VENV_PYTHON="$HOME/venv/bin/python3"
-VENV_HF_CLI="$HOME/venv/bin/hf"
 if [ ! -f "$VENV_HF_CLI" ]; then
-    echo "hf CLI not found — installing huggingface_hub into ~/venv..."
+    echo "hf CLI not found — installing huggingface_hub into $VENV_DIR..."
     "$VENV_PYTHON" -m pip install -U "huggingface_hub"
 fi
 if [ ! -f "$VENV_HF_CLI" ]; then
@@ -82,7 +103,6 @@ CONTEXT_SIZE=6144   # max_prompt(4096) + max_gen(1024) + 1024 headroom
 LLAMACPP_BIN="${LLAMACPP_BIN:-$HOME/llama.cpp/build/bin/llama-server}"
 LLAMACPP_PORT=8080
 
-MLX_LM_BIN="${MLX_LM_BIN:-$HOME/Desktop/smolbenchmark/venv/bin/mlx_lm.server}"
 MLX_PORT=8080
 MLX_DIR="$HOME/mlx-models"
 
@@ -178,7 +198,7 @@ SWEEP_DATE=$(date +%Y%m%d-%H%M)
 if [ -n "$RESUME_DIR" ]; then
     BASE_ARTIFACT="$RESUME_DIR"
 else
-    BASE_ARTIFACT="$HOME/Desktop/smolbenchmark/benchmark-mac-mini-m4/non-reasoning-models/artifacts/mac-m4-${SWEEP_DATE}"
+    BASE_ARTIFACT="$SCRIPT_DIR/artifacts/mac-m4-${SWEEP_DATE}"
 fi
 TIMING_LOG="$BASE_ARTIFACT/model_timing.log"
 
@@ -461,9 +481,9 @@ else
 fi
 
 # ── Activate aiperf venv ──────────────────────────────────────────────────────
-AIPERF_BIN="$HOME/Desktop/smolbenchmark/venv/bin/aiperf"
-[ -f "$AIPERF_BIN" ] || { echo "ERROR: aiperf not found at $AIPERF_BIN"; echo "  Run: pip install 'git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4' inside ~/Desktop/smolbenchmark/venv/"; exit 1; }
-source "$HOME/Desktop/smolbenchmark/venv/bin/activate"
+[ -x "$AIPERF_BIN" ] || { echo "ERROR: aiperf not found at $AIPERF_BIN"; echo "  From the clone root: pip install 'git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4'"; exit 1; }
+# shellcheck disable=SC1091
+source "$VENV_DIR/bin/activate"
 
 mkdir -p "$BASE_ARTIFACT"
 
