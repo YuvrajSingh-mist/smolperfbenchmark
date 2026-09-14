@@ -1,6 +1,6 @@
 # AGENTS.md
 
-smolperfbenchmark (formerly smolbenchmark) is a collection of **self-contained per-device benchmark folders** (Jetson, Mac Mini M4, Raspberry Pi 5, Android phone), each with bash benchmark scripts + Python chart/report generators + a README. There is **no root build, test, lint, or package tooling** — you cannot run `cargo`/`npm`/`pytest` "for the repo." Treat each subfolder on its own.
+There is **no root cargo/npm/pytest suite** — treat each device folder on its own. The clone-root `pyproject.toml` is only the **uv** pin for aiperf + chart libs (`uv sync`).
 
 ## Git authorship
 
@@ -30,14 +30,14 @@ The `.sh` scripts are not unit-testable — they need real hardware, `sudo`, and
 
 ## Toolchain (venv & CLIs — paths differ per device!)
 
-- **Mac Mini + Android** use a **venv in the clone root** (`<repo>/venv/`). Scripts search that path, then `.venv`, then `$SMOL_VENV`, then the old `~/Desktop/smolbenchmark/venv` fallback. `AIPERF_BIN`/`HF_CLI` still override. Host setup was tested on **MacBook Air M1 (2020)** and **Mac Mini M4 (2025), 16 GB**.
-- **Jetson + Pi** instead `source` `$HOME/venv/bin/activate` (fallback `$HOME/aiperf-env`) and call bare `aiperf`/`hf` from PATH — a *different* `~/venv`, not `~/Desktop/smolbenchmark/venv`.
-- `aiperf` is the load generator. The **PyPI `aiperf` is a yanked placeholder**. Pin the revision used for published numbers: **0.11.0** at `git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4` (`aiperf --version` → `0.11.0`). Requires Python ≥ 3.11; Homebrew Python is broken on macOS (libexpat), so use `uv` to build the venv.
+- **Mac Mini + Android** use **uv** at the clone root (`uv sync` → `<repo>/.venv`). Scripts search `$SMOL_VENV`, then `.venv`, then `venv`, then the old `~/Desktop/smolbenchmark/venv` fallback. Host setup was tested on **MacBook Air M1 (2020)** and **Mac Mini M4 (2025), 16 GB**. Mac Mini MLX also needs `uv sync --extra mac`.
+- **Jetson + Pi** run `uv sync` in the clone on the board (same `pyproject.toml`). Scripts walk up to `pyproject.toml` and activate `.venv`, then fall back to `$HOME/venv` / `$HOME/aiperf-env`.
+- `aiperf` is the load generator. The **PyPI `aiperf` is a yanked placeholder**. The pin is in `pyproject.toml` / `uv.lock`: **0.11.0** at git `44addf0c545ff4a865c177881ca9814484ec97b4` (`aiperf --version` → `0.11.0`). Requires Python ≥ 3.11; Homebrew Python is broken on macOS (libexpat), so `uv` must provide the interpreter.
 - HF CLI is now `hf`, not `huggingface-cli`. `hf auth login` is required for gated models (Gemma-3, Llama-3.2).
 
 ## Git-ignored / non-committed
 
-`**/artifacts/`, `*.gguf`, `*.bin`, `*.safetensors`, `models/`, `gguf-models/`, `venv/` are gitignored. Reports reference `artifacts/charts/*.png` that will **not exist** in a fresh clone — they are regenerated, not checked in.
+`**/artifacts/`, `*.gguf`, `*.bin`, `*.safetensors`, `models/`, `gguf-models/`, `venv/`, `.venv/` are gitignored. `uv.lock` **is** committed. Reports reference `artifacts/charts/*.png` that will **not exist** in a fresh clone — they are regenerated, not checked in.
 
 ## Benchmark script conventions (shared across folders)
 

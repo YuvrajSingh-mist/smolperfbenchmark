@@ -10,6 +10,9 @@ Each subfolder is self-contained with its own benchmark scripts, chart generator
 smolbenchmark/
 ├── README.md                                # this file
 ├── LICENSE
+├── pyproject.toml                           # uv: aiperf 0.11.0 + chart libs
+├── uv.lock
+├── .python-version                          # 3.12
 ├── leaderboard/                             # github.io redirect stub → Vercel
 ├── leaderboard-site/                        # private site clone (gitignored; see its README)
 │
@@ -62,24 +65,19 @@ Live leaderboard: https://smolbenchmark.vercel.app/ (edit/setup: private [`smolb
 
 ## Load generator
 
-Published numbers were taken with **aiperf 0.11.0** from [ai-dynamo/aiperf](https://github.com/ai-dynamo/aiperf) at commit [`44addf0`](https://github.com/ai-dynamo/aiperf/commit/44addf0c545ff4a865c177881ca9814484ec97b4). Do not `pip install aiperf` from PyPI (yanked stub). Install that exact revision so a clone matches the benches:
-
-```bash
-pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
-```
-
-Each device README repeats this pin in its setup section. `aiperf --version` should print `0.11.0`.
+Published numbers used **aiperf 0.11.0** (`44addf0`). Do not `pip install aiperf` from PyPI (yanked stub). The pin lives in `pyproject.toml` / `uv.lock`.
 
 ## Clone anywhere
 
-Clone this repo to any directory. Create the Python venv **in the clone root** (`./venv`). Scripts resolve that path themselves; you do not need `~/Desktop/smolbenchmark`.
+Clone this repo to any directory. Python deps are installed with **uv** into `.venv/` at the clone root. Scripts look there first.
 
 ```bash
+# uv: https://docs.astral.sh/uv/  (macOS: brew install uv)
 git clone https://github.com/YuvrajSingh-mist/smolperfbenchmark.git
 cd smolperfbenchmark
-python3 -m venv venv
-source venv/bin/activate
-pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4" huggingface_hub
+uv sync                         # aiperf 0.11.0 + hf + chart libs
+uv sync --extra mac             # Mac Mini only: also mlx-lm
+.venv/bin/aiperf --version      # must print 0.11.0
 ```
 
 Override with `SMOL_VENV=/path/to/venv` if you keep the environment somewhere else.

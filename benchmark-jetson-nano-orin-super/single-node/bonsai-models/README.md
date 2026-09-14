@@ -67,13 +67,12 @@ Sweep: 4 prompt lengths × 3 gen lengths × 20 requests = 12 combos per model, 7
 ### Prerequisites
 
 - Jetson Orin running JetPack 6.x
-- `aiperf` **0.11.0** in `~/venv` (same git pin as the other folders)
+- `aiperf` **0.11.0** via `uv sync` in the clone (`.venv`)
 
 ```bash
-python3 -m venv ~/venv
-source ~/venv/bin/activate
-pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
-aiperf --version   # 0.11.0
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+.venv/bin/aiperf --version   # 0.11.0
 ```
 
 Do not `pip install aiperf` from PyPI (yanked stub). This folder runs on the Jetson. Mac-side clone/docs were checked on a MacBook Air M1 (2020) and a Mac Mini M4 (2025) 16 GB.

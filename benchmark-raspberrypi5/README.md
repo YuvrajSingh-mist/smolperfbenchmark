@@ -38,22 +38,22 @@ These are set inline when the script starts Ollama — no manual configuration n
 
 ### aiperf (load generator, required)
 
-Published numbers used **aiperf 0.11.0**. Do not `pip install aiperf` from PyPI (yanked stub). Pin the same git revision:
+Published numbers used **aiperf 0.11.0**. From the clone root on the Pi:
 
 ```bash
-python3 -m venv ~/aiperf-env
-source ~/aiperf-env/bin/activate
-pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
-aiperf --version   # 0.11.0
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+.venv/bin/aiperf --version   # 0.11.0
 ```
 
-The script tries `~/venv` first, then `~/aiperf-env`. These live on the **Pi**, not the Mac. Artifacts write next to this README (`./artifacts/...`), not a Desktop path. Mac-side clone/docs were checked on a MacBook Air M1 (2020) and a Mac Mini M4 (2025) 16 GB.
+Do not `pip install aiperf` from PyPI (yanked stub). The script looks for `<clone>/.venv`, then `~/venv`, then `~/aiperf-env`. Artifacts write next to this README (`./artifacts/...`). Mac-side clone/docs were checked on a MacBook Air M1 (2020) and a Mac Mini M4 (2025) 16 GB.
 
 ### HuggingFace CLI (for model auto-download)
 
+`uv sync` already installs `hf`. For gated models (Llama-3.2, Gemma 3):
+
 ```bash
-pip install huggingface_hub
-huggingface-cli login   # required for gated models (Llama-3.2, Gemma 3)
+.venv/bin/hf auth login
 ```
 
 Models are downloaded automatically on first run if the GGUF is missing from `~/gguf-models/`.

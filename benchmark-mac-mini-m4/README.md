@@ -89,9 +89,9 @@ Decode-only energy is used because prefill is a one-time prompt cost; decode is 
 - Mac Mini M4 (or any Apple Silicon Mac with ≥ 16 GB)
 - macOS Sequoia or later
 - `sudo` access (required for `powermetrics`)
-- Python 3.10+
-- `huggingface-hub` CLI (`pip install huggingface-hub`)
-- `aiperf` **0.11.0** in the shared venv (see step 7)
+- Python 3.11+ (uv pins 3.12 via `.python-version`)
+- `hf` CLI (comes with `uv sync` at the clone root)
+- `aiperf` **0.11.0** in `.venv` (see step 5)
 
 ### 1. Install dependencies
 
@@ -136,17 +136,17 @@ git clone https://github.com/YuvrajSingh-mist/smolperfbenchmark.git
 cd smolperfbenchmark
 ```
 
-### 5. Set up the venv in the clone
+### 5. Python env (`uv`)
 
-All Python tools (aiperf, huggingface_hub, MLX-LM) live in `venv/` at the **clone root** (the folder that contains `benchmark-mac-mini-m4/`). Scripts find `./venv` automatically.
+All Python tools live in `.venv/` at the **clone root**. From that root:
 
 ```bash
-# still in the clone root
-python3 -m venv venv
-source venv/bin/activate
-pip install -U pip
-pip install -U "huggingface_hub"
+brew install uv    # if needed; uv bundles its own Python (Homebrew CPython is broken on macOS 15)
+uv sync --extra mac
+.venv/bin/aiperf --version   # must print 0.11.0
 ```
+
+That installs the locked **aiperf 0.11.0** (`44addf0`), `hf`, chart libs, and `mlx-lm`. Do not `pip install aiperf` from PyPI (yanked stub). Scripts find `.venv` automatically.
 
 The benchmark script uses `hf download` to pull GGUFs on first run. Note: `huggingface_hub` ≥1.0 ships the CLI as `hf`, not `huggingface-cli`.
 
@@ -168,27 +168,11 @@ Steps:
 3. Log in from this machine:
 
 ```bash
-./venv/bin/hf auth login
+.venv/bin/hf auth login
 # paste your token when prompted
 ```
 
 This saves the token to `~/.cache/huggingface/token`, which `hf`, `aiperf`, and `transformers` all read automatically — no `--add-to-git-credential` or manual `HF_TOKEN` export needed for local use.
-
-### 7. Install aiperf
-
-The `aiperf` package on PyPI (`pip install aiperf`) is a yanked non-functional placeholder — do not use it. Install **0.11.0**, the git revision used for the published numbers, into the repo's shared venv:
-
-```bash
-source venv/bin/activate
-pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
-```
-
-Verify:
-
-```bash
-./venv/bin/aiperf --version
-# must print 0.11.0
-```
 
 ---
 

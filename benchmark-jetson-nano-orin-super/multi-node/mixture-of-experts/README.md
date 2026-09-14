@@ -152,22 +152,22 @@ Override the head binary path with `LLAMACPP_BIN=/path/to/llama-server`; the wor
 
 ### aiperf (load generator, required, head node only)
 
-Published numbers used **aiperf 0.11.0**. Do not `pip install aiperf` from PyPI (yanked stub). Pin the same git revision:
+Published numbers used **aiperf 0.11.0**. From the clone root on the board:
 
 ```bash
-python3 -m venv ~/aiperf-env
-source ~/aiperf-env/bin/activate
-pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
-aiperf --version   # 0.11.0
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+.venv/bin/aiperf --version   # 0.11.0
 ```
 
-The script tries `~/venv` then `~/aiperf-env`. Head-node only. Mac-side clone/docs were checked on a MacBook Air M1 (2020) and a Mac Mini M4 (2025) 16 GB.
+Do not `pip install aiperf` from PyPI (yanked stub). The script looks for `<clone>/.venv`, then `~/venv`, then `~/aiperf-env`. Head-node only. Mac-side clone/docs were checked on a MacBook Air M1 (2020) and a Mac Mini M4 (2025) 16 GB.
 
 ### HuggingFace CLI (for model auto-download, head node only)
 
+`uv sync` already installs `hf`. For gated models:
+
 ```bash
-pip install --break-system-packages -U "huggingface_hub[cli]"
-huggingface-cli login   # only needed for gated models
+.venv/bin/hf auth login
 ```
 
 

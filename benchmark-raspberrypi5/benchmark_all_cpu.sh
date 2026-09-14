@@ -562,22 +562,29 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 # ── Activate aiperf venv ──────────────────────────────────────────────────────
-source "$HOME/venv/bin/activate" 2>/dev/null || \
-source "$HOME/aiperf-env/bin/activate" 2>/dev/null || {
+_smol_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+while [ "$_smol_root" != "/" ] && [ ! -f "$_smol_root/pyproject.toml" ]; do
+    _smol_root="$(dirname "$_smol_root")"
+done
+_activated=0
+for _v in "${SMOL_VENV:-}" "$_smol_root/.venv" "$_smol_root/venv" "$HOME/venv" "$HOME/aiperf-env"; do
+    if [ -n "${_v:-}" ] && [ -f "$_v/bin/activate" ]; then
+        # shellcheck disable=SC1091
+        source "$_v/bin/activate"
+        _activated=1
+        break
+    fi
+done
+if [ "$_activated" != 1 ] || ! command -v aiperf >/dev/null; then
     echo ""
     echo "  ╔══════════════════════════════════════════════════════╗"
     echo "  ║  ERROR: aiperf venv not found                        ║"
     echo "  ╠══════════════════════════════════════════════════════╣"
-    echo "  ║  Looked for: ~/venv  and  ~/aiperf-env               ║"
+    echo "  ║  From the clone root:  uv sync                       ║"
     echo "  ╚══════════════════════════════════════════════════════╝"
     echo ""
-    echo "  Create it with aiperf 0.11.0 (same pin as the README):"
-    echo "    python3 -m venv ~/aiperf-env"
-    echo "    source ~/aiperf-env/bin/activate"
-    echo '    pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"'
-    echo ""
     exit 1
-}
+fi
 
 # PMIC stats logger runs per-combo (started just before each aiperf call)
 start_stats_logger() {

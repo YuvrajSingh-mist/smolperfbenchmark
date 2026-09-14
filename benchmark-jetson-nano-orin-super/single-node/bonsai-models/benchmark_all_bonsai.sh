@@ -305,9 +305,23 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 # ── Activate aiperf venv ──────────────────────────────────────────────────────
-source "$HOME/venv/bin/activate" 2>/dev/null || \
-source "$HOME/aiperf-env/bin/activate" 2>/dev/null || \
-{ echo "ERROR: no aiperf venv found (~venv or ~aiperf-env)"; exit 1; }
+_smol_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+while [ "$_smol_root" != "/" ] && [ ! -f "$_smol_root/pyproject.toml" ]; do
+    _smol_root="$(dirname "$_smol_root")"
+done
+_activated=0
+for _v in "${SMOL_VENV:-}" "$_smol_root/.venv" "$_smol_root/venv" "$HOME/venv" "$HOME/aiperf-env"; do
+    if [ -n "${_v:-}" ] && [ -f "$_v/bin/activate" ]; then
+        # shellcheck disable=SC1091
+        source "$_v/bin/activate"
+        _activated=1
+        break
+    fi
+done
+if [ "$_activated" != 1 ] || ! command -v aiperf >/dev/null; then
+    echo "ERROR: aiperf venv not found. From the clone root: uv sync"
+    exit 1
+fi
 
 # ── Phase 3: Start tegrastats ─────────────────────────────────────────────────
 if [ "$DRY_RUN" = 0 ]; then

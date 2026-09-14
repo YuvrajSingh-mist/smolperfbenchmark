@@ -23,8 +23,8 @@
 #
 # Host requirements:
 #   - adb in PATH
-#   - python3 + aiperf 0.11.0 (git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4)
-#   - hf CLI (pip install huggingface_hub[cli]) for model downloads
+#   - python3 + aiperf 0.11.0 (uv sync at the clone root → .venv)
+#   - hf CLI (uv sync at the clone root)
 #
 # Usage:
 #   bash benchmark_android.sh                              # all models, CPU only
@@ -109,8 +109,8 @@ DEVICE_BIN="${DEVICE_BIN_CPU}"
 
 # Host paths
 # Host paths — clone-local venv first, then PATH
-HF_CLI="${HF_CLI:-$(_first_exe "$REPO_ROOT/venv/bin/hf" "$REPO_ROOT/.venv/bin/hf" "$HOME/Desktop/smolbenchmark/venv/bin/hf" "$HOME/venv/bin/hf" "$(command -v hf 2>/dev/null || true)")}"
-AIPERF_BIN="${AIPERF_BIN:-$(_first_exe "$REPO_ROOT/venv/bin/aiperf" "$REPO_ROOT/.venv/bin/aiperf" "$HOME/Desktop/smolbenchmark/venv/bin/aiperf" "$HOME/venv/bin/aiperf" "$(command -v aiperf 2>/dev/null || true)")}"
+HF_CLI="${HF_CLI:-$(_first_exe "$REPO_ROOT/.venv/bin/hf" "$REPO_ROOT/venv/bin/hf" "$HOME/Desktop/smolbenchmark/venv/bin/hf" "$HOME/venv/bin/hf" "$(command -v hf 2>/dev/null || true)")}"
+AIPERF_BIN="${AIPERF_BIN:-$(_first_exe "$REPO_ROOT/.venv/bin/aiperf" "$REPO_ROOT/venv/bin/aiperf" "$HOME/Desktop/smolbenchmark/venv/bin/aiperf" "$HOME/venv/bin/aiperf" "$(command -v aiperf 2>/dev/null || true)")}"
 
 # Artifact dirs and logfiles — resolved after arg parsing
 BASE_ARTIFACT=""
@@ -661,12 +661,12 @@ if [ "$DRY_RUN" = 0 ] && [[ "${ANDROID_SERIAL:-}" != *.* ]]; then
 fi
 
 if [ ! -f "$AIPERF_BIN" ] && ! command -v aiperf &>/dev/null; then
-    echo "ERROR: aiperf not found. Install with: pip install 'git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4'"
+    echo "ERROR: aiperf not found. From the clone root: uv sync"
     exit 1
 fi
 
 if [ "$DRY_RUN" = 0 ] && ! command -v hf &>/dev/null && [ ! -f "$HF_CLI" ]; then
-    echo "ERROR: hf CLI not found. Install with: pip install 'huggingface_hub[cli]'"
+    echo "ERROR: hf CLI not found. From the clone root: uv sync"
     exit 1
 fi
 

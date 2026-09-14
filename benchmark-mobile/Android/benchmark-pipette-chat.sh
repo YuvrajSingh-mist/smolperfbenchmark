@@ -33,7 +33,7 @@
 #
 # Requirements:
 #   - adb (device authorised), app installed + chat server started in-app
-#   - python3 + aiperf 0.11.0 (git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4)
+#   - python3 + aiperf 0.11.0 (uv sync at the clone root → .venv)
 
 set -euo pipefail
 
@@ -86,8 +86,8 @@ GEN_LENGTHS=(64 128 256)
 
 ADB="adb"
 SERIAL=""
-AIPERF_BIN="${AIPERF_BIN:-$(_first_exe "$REPO_ROOT/venv/bin/aiperf" "$REPO_ROOT/.venv/bin/aiperf" "$HOME/Desktop/smolbenchmark/venv/bin/aiperf" "$HOME/venv/bin/aiperf" "$(command -v aiperf 2>/dev/null || true)")}"
-HF_CLI="${HF_CLI:-$(_first_exe "$REPO_ROOT/venv/bin/hf" "$REPO_ROOT/.venv/bin/hf" "$HOME/Desktop/smolbenchmark/venv/bin/hf" "$(command -v hf 2>/dev/null || true)")}"
+AIPERF_BIN="${AIPERF_BIN:-$(_first_exe "$REPO_ROOT/.venv/bin/aiperf" "$REPO_ROOT/venv/bin/aiperf" "$HOME/Desktop/smolbenchmark/venv/bin/aiperf" "$HOME/venv/bin/aiperf" "$(command -v aiperf 2>/dev/null || true)")}"
+HF_CLI="${HF_CLI:-$(_first_exe "$REPO_ROOT/.venv/bin/hf" "$REPO_ROOT/venv/bin/hf" "$HOME/Desktop/smolbenchmark/venv/bin/hf" "$(command -v hf 2>/dev/null || true)")}"
 
 BASE_ARTIFACT=""
 THERMAL_LOG=""
@@ -131,7 +131,7 @@ ts()   { date '+%Y-%m-%d %H:%M:%S'; }
 # ── Prereqs ───────────────────────────────────────────────────────────────────
 command -v "${ADB%% *}" >/dev/null || err "adb not found in PATH"
 if [ ! -f "$AIPERF_BIN" ] && ! command -v aiperf >/dev/null; then
-    err "aiperf not found. Install with: pip install 'git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4'"
+    err "aiperf not found. From the clone root: uv sync"
 fi
 
 DEVICE=$($ADB devices | awk 'NR==2{print $1}')

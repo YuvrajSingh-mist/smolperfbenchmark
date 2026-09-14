@@ -25,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 _pick_venv() {
     local d
-    for d in ${SMOL_VENV:-} "$REPO_ROOT/venv" "$REPO_ROOT/.venv" \
+    for d in "${SMOL_VENV:-}" "$REPO_ROOT/.venv" "$REPO_ROOT/venv" \
              "$HOME/Desktop/smolbenchmark/venv" "$HOME/venv"; do
         [ -n "${d:-}" ] && [ -x "$d/bin/python3" ] && { printf '%s\n' "$d"; return 0; }
     done
@@ -35,8 +35,7 @@ VENV_DIR="$(_pick_venv || true)"
 if [ -z "${VENV_DIR:-}" ]; then
     echo "ERROR: no Python venv found next to the clone."
     echo "  From the repo root (any path is fine):"
-    echo "    python3 -m venv venv && source venv/bin/activate"
-    echo "    pip install \"git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4\" huggingface_hub"
+    echo "    uv sync --extra mac"
     exit 1
 fi
 VENV_PYTHON="$VENV_DIR/bin/python3"
@@ -53,12 +52,7 @@ fi
 # ── Ensure hf CLI is available ────────────────────────────────────────────────
 # huggingface_hub ≥1.0 ships the CLI as `hf` (not `huggingface-cli`).
 if [ ! -f "$VENV_HF_CLI" ]; then
-    echo "hf CLI not found — installing huggingface_hub into $VENV_DIR..."
-    "$VENV_PYTHON" -m pip install -U "huggingface_hub"
-fi
-if [ ! -f "$VENV_HF_CLI" ]; then
-    echo "ERROR: hf CLI not available after install."
-    echo "  Try: $VENV_PYTHON -m pip install -U huggingface_hub"
+    echo "hf CLI not found — run uv sync --extra mac from the clone root."
     exit 1
 fi
 
@@ -423,7 +417,7 @@ done
 fi
 
 # ── Activate aiperf venv ──────────────────────────────────────────────────────
-[ -x "$AIPERF_BIN" ] || { echo "ERROR: aiperf not found at $AIPERF_BIN"; echo "  From the clone root: pip install 'git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4'"; exit 1; }
+[ -x "$AIPERF_BIN" ] || { echo "ERROR: aiperf not found at $AIPERF_BIN"; echo "  From the clone root: uv sync --extra mac"; exit 1; }
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 

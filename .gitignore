@@ -28,6 +28,8 @@ artifacts/
 
 # Python
 venv/
+.venv/
+uv.lock.bak
 __pycache__/
 *.pyc
 *.pyo

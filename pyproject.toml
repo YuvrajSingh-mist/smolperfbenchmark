@@ -1,0 +1,30 @@
+[project]
+name = "smolperfbenchmark"
+version = "0.1.0"
+description = "On-device LLM benchmark harness: aiperf load generator plus per-device scripts."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "aiperf",
+    "huggingface-hub>=0.34",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+]
+
+[project.optional-dependencies]
+mac = [
+    "mlx-lm",
+]
+
+[project.urls]
+Homepage = "https://smolperfbenchmark.vercel.app/"
+Repository = "https://github.com/YuvrajSingh-mist/smolperfbenchmark"
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+aiperf = { git = "https://github.com/ai-dynamo/aiperf.git", rev = "44addf0c545ff4a865c177881ca9814484ec97b4" }

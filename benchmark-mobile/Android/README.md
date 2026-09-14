@@ -28,7 +28,7 @@ Features: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp
 
 ## Host Requirements
 
-Harness host is a Mac with Homebrew. **Tested on MacBook Air M1 (2020) and Mac Mini M4 (2025), 16 GB.** Clone the repo anywhere; venv lives at `<clone>/venv`.
+Harness host is a Mac with Homebrew. **Tested on MacBook Air M1 (2020) and Mac Mini M4 (2025), 16 GB.** Clone the repo anywhere; venv lives at `<clone>/.venv` (`uv sync`).
 
 | Tool | Install |
 |---|---|
@@ -268,19 +268,15 @@ adb -s "${PHONE_IP}:5555" usb   # switch back to USB mode, then replug cable
 
 ### 9. Set Up Python Environment
 
-> **Important:** `pip install aiperf` from PyPI installs a **deliberately non-functional placeholder** (v0.1.0). The real tool is at [github.com/ai-dynamo/aiperf](https://github.com/ai-dynamo/aiperf) and requires Python ≥ 3.11. Pin **0.11.0** (`44addf0`) — the revision used for published numbers — do not install `main`.
+> **Important:** `pip install aiperf` from PyPI installs a **deliberately non-functional placeholder** (v0.1.0). Use `uv sync` at the clone root so `pyproject.toml` / `uv.lock` install **aiperf 0.11.0** (`44addf0`).
 >
-> Homebrew Python 3.12/3.13/3.14 are broken on macOS 15 due to a `libexpat` dylib symbol mismatch. Use `uv` which bundles its own Python and avoids the issue.
+> Homebrew Python 3.12/3.13/3.14 are broken on macOS 15 due to a `libexpat` dylib symbol mismatch. `uv` bundles its own Python.
 
 ```bash
 # from the clone root — any directory is fine
-uv venv venv --python 3.12
-source venv/bin/activate
-uv pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4" \
-               'huggingface_hub[hf_transfer]'
-
-# Verify — must be 0.11.0 (the revision used for published numbers)
-./venv/bin/aiperf --version   # 0.11.0
+brew install uv    # if needed
+uv sync
+.venv/bin/aiperf --version   # must print 0.11.0
 ```
 
 > **Note:** The HF CLI is now `hf`, not `huggingface-cli` (deprecated).
@@ -364,7 +360,7 @@ Phase 6 — Generate Markdown report from artifact tree
 cd benchmark-mobile/Android
 
 # CPU only (default, 20 requests per combo).
-# Scripts find <clone>/venv/bin/aiperf and hf — no Desktop path required.
+# Scripts find <clone>/.venv/bin/aiperf and hf — no Desktop path required.
 TMUX=bypass /opt/homebrew/bin/bash benchmark-non-reasoning.sh --reqs 20
 
 # Resume interrupted run
@@ -431,6 +427,6 @@ hf auth login   # paste token from hf.co/settings/tokens
 | llama-server CPU binary (host) | `benchmark-mobile/llama.cpp/build-android/bin/llama-server` |
 | llama-server on device | `/data/local/tmp/llama-server` |
 | GGUF models on device | `/data/local/tmp/models/<family>/` |
-| Python venv | `<clone>/venv/` (Python 3.12 via uv) |
+| Python venv | `<clone>/.venv/` (Python 3.12 via uv) |
 | Benchmark script | `benchmark-mobile/Android/benchmark-non-reasoning.sh` |
 | Artifacts | `benchmark-mobile/Android/artifacts/android/` |

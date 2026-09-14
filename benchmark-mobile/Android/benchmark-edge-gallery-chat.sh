@@ -11,7 +11,7 @@
 #          "Local benchmark server" toggle)
 #          │  adb forward tcp:<host> → tcp:<device>
 #          ▼
-#        host aiperf 0.13 --endpoint-type chat --url http://localhost:<host>
+#        host aiperf 0.11.0 --endpoint-type chat --url http://localhost:<host>
 #
 # The model is downloaded in the app (AI Chat → model → Download) and the
 # server is started from **Settings → Local benchmark server**. This script
@@ -36,7 +36,7 @@
 #
 # Requirements:
 #   - adb (device authorised), fork app installed + server toggled ON in Settings
-#   - aiperf 0.11.0 (clone-root venv: ./venv/bin/aiperf)
+#   - aiperf 0.11.0 (clone-root venv: .venv/bin/aiperf)
 
 set -euo pipefail
 
@@ -89,7 +89,7 @@ DETECT_PORTS="8080 8081 8082 8083 8084 8085 8086 8087 8088 8089"
 
 ADB="adb"
 SERIAL=""
-AIPERF_BIN="${AIPERF_BIN:-$(_first_exe "$REPO_ROOT/venv/bin/aiperf" "$REPO_ROOT/.venv/bin/aiperf" "$HOME/Desktop/smolbenchmark/venv/bin/aiperf" "$HOME/venv/bin/aiperf" "$(command -v aiperf 2>/dev/null || true)")}"
+AIPERF_BIN="${AIPERF_BIN:-$(_first_exe "$REPO_ROOT/.venv/bin/aiperf" "$REPO_ROOT/venv/bin/aiperf" "$HOME/Desktop/smolbenchmark/venv/bin/aiperf" "$HOME/venv/bin/aiperf" "$(command -v aiperf 2>/dev/null || true)")}"
 
 BASE_ARTIFACT=""
 THERMAL_LOG=""
