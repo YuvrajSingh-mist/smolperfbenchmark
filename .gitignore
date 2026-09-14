@@ -6,6 +6,9 @@ benchmark-mobile/TinyBench/
 # Private leaderboard site (own .git; push to smolbenchmark-leaderboard → Vercel)
 leaderboard-site/
 
+# Local tweet/motion promo (mp4s, posters, record scripts)
+promo/
+
 # Local copy/sync noise
 .smol_copy_failures.log
 
