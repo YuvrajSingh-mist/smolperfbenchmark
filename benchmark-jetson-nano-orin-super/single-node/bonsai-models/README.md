@@ -67,7 +67,16 @@ Sweep: 4 prompt lengths × 3 gen lengths × 20 requests = 12 combos per model, 7
 ### Prerequisites
 
 - Jetson Orin running JetPack 6.x
-- `aiperf` installed in `~/venv` (included in Bonsai-demo setup)
+- `aiperf` **0.11.0** in `~/venv` (same git pin as the other folders)
+
+```bash
+python3 -m venv ~/venv
+source ~/venv/bin/activate
+pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
+aiperf --version   # 0.11.0
+```
+
+Do not `pip install aiperf` from PyPI (yanked stub).
 
 ### 1. Clone this benchmark repo
 

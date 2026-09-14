@@ -462,7 +462,7 @@ fi
 
 # ── Activate aiperf venv ──────────────────────────────────────────────────────
 AIPERF_BIN="$HOME/Desktop/smolbenchmark/venv/bin/aiperf"
-[ -f "$AIPERF_BIN" ] || { echo "ERROR: aiperf not found at $AIPERF_BIN"; echo "  Run: pip install 'aiperf @ git+https://github.com/ai-dynamo/aiperf.git' inside ~/Desktop/smolbenchmark/venv/"; exit 1; }
+[ -f "$AIPERF_BIN" ] || { echo "ERROR: aiperf not found at $AIPERF_BIN"; echo "  Run: pip install 'git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4' inside ~/Desktop/smolbenchmark/venv/"; exit 1; }
 source "$HOME/Desktop/smolbenchmark/venv/bin/activate"
 
 mkdir -p "$BASE_ARTIFACT"

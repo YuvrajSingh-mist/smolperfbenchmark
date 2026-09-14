@@ -23,7 +23,7 @@
 #
 # Host requirements:
 #   - adb in PATH
-#   - python3 + pip install aiperf
+#   - python3 + aiperf 0.11.0 (git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4)
 #   - hf CLI (pip install huggingface_hub[cli]) for model downloads
 #
 # Usage:
@@ -652,7 +652,7 @@ if [ "$DRY_RUN" = 0 ] && [[ "${ANDROID_SERIAL:-}" != *.* ]]; then
 fi
 
 if [ ! -f "$AIPERF_BIN" ] && ! command -v aiperf &>/dev/null; then
-    echo "ERROR: aiperf not found. Install with: pip install aiperf"
+    echo "ERROR: aiperf not found. Install with: pip install 'git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4'"
     exit 1
 fi
 

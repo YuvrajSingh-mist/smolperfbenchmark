@@ -258,7 +258,7 @@ adb -s "${PHONE_IP}:5555" usb   # switch back to USB mode, then replug cable
 
 ### 9. Set Up Python Environment
 
-> **Important:** `pip install aiperf` from PyPI installs a **deliberately non-functional placeholder** (v0.1.0). The real tool is at [github.com/ai-dynamo/aiperf](https://github.com/ai-dynamo/aiperf) and requires Python ≥ 3.11.
+> **Important:** `pip install aiperf` from PyPI installs a **deliberately non-functional placeholder** (v0.1.0). The real tool is at [github.com/ai-dynamo/aiperf](https://github.com/ai-dynamo/aiperf) and requires Python ≥ 3.11. Pin **0.11.0** (`44addf0`) — the revision used for published numbers — do not install `main`.
 >
 > Homebrew Python 3.12/3.13/3.14 are broken on macOS 15 due to a `libexpat` dylib symbol mismatch. Use `uv` which bundles its own Python and avoids the issue.
 
@@ -267,10 +267,10 @@ adb -s "${PHONE_IP}:5555" usb   # switch back to USB mode, then replug cable
 brew install uv
 uv venv venv --python 3.12    # run from smolbenchmark/ root
 source venv/bin/activate
-uv pip install "git+https://github.com/ai-dynamo/aiperf.git" \
+uv pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4" \
                'huggingface_hub[hf_transfer]'
 
-# Verify
+# Verify — must be 0.11.0 (the revision used for published numbers)
 aiperf --version   # 0.11.0
 hf --version       # 1.19.0
 ```

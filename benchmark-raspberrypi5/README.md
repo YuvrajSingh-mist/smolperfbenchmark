@@ -38,10 +38,13 @@ These are set inline when the script starts Ollama — no manual configuration n
 
 ### aiperf (load generator, required)
 
+Published numbers used **aiperf 0.11.0**. Do not `pip install aiperf` from PyPI (yanked stub). Pin the same git revision:
+
 ```bash
 python3 -m venv ~/aiperf-env
 source ~/aiperf-env/bin/activate
-pip install aiperf
+pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
+aiperf --version   # 0.11.0
 ```
 
 The script tries `~/venv` first, then `~/aiperf-env`.

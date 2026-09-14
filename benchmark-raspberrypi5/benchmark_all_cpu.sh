@@ -567,12 +567,12 @@ source "$HOME/aiperf-env/bin/activate" 2>/dev/null || {
     echo "  ║  ERROR: aiperf venv not found                        ║"
     echo "  ╠══════════════════════════════════════════════════════╣"
     echo "  ║  Looked for: ~/venv  and  ~/aiperf-env               ║"
-    echo "  ║                                                      ║"
-    echo "  ║  Create it with:                                     ║"
-    echo "  ║    python3 -m venv ~/aiperf-env                      ║"
-    echo "  ║    source ~/aiperf-env/bin/activate                  ║"
-    echo "  ║    pip install aiperf                                ║"
     echo "  ╚══════════════════════════════════════════════════════╝"
+    echo ""
+    echo "  Create it with aiperf 0.11.0 (same pin as the README):"
+    echo "    python3 -m venv ~/aiperf-env"
+    echo "    source ~/aiperf-env/bin/activate"
+    echo '    pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"'
     echo ""
     exit 1
 }

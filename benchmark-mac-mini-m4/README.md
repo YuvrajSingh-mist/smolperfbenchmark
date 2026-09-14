@@ -91,7 +91,7 @@ Decode-only energy is used because prefill is a one-time prompt cost; decode is 
 - `sudo` access (required for `powermetrics`)
 - Python 3.10+
 - `huggingface-hub` CLI (`pip install huggingface-hub`)
-- `aiperf` installed in `~/venv`
+- `aiperf` **0.11.0** in the shared venv (see step 7)
 
 ### 1. Install dependencies
 
@@ -172,19 +172,19 @@ This saves the token to `~/.cache/huggingface/token`, which `hf`, `aiperf`, and 
 
 ### 7. Install aiperf
 
-The `aiperf` package on PyPI (`pip install aiperf`) is a yanked non-functional placeholder — do not use it. Install from the real source into the repo's shared venv:
+The `aiperf` package on PyPI (`pip install aiperf`) is a yanked non-functional placeholder — do not use it. Install **0.11.0**, the git revision used for the published numbers, into the repo's shared venv:
 
 ```bash
 cd ~/Desktop/smolbenchmark
 source venv/bin/activate
-pip install "aiperf @ git+https://github.com/ai-dynamo/aiperf.git"
+pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
 ```
 
 Verify:
 
 ```bash
 ~/Desktop/smolbenchmark/venv/bin/aiperf --version
-# should print 0.11.0 or later
+# must print 0.11.0
 ```
 
 ---

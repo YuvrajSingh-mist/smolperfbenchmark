@@ -60,6 +60,16 @@ Single-board Jetson MoE benchmarks (`single-node/mixture-of-experts/`) are plann
 
 Live leaderboard: https://smolbenchmark.vercel.app/ (edit/setup: private [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) README).
 
+## Load generator
+
+Published numbers were taken with **aiperf 0.11.0** from [ai-dynamo/aiperf](https://github.com/ai-dynamo/aiperf) at commit [`44addf0`](https://github.com/ai-dynamo/aiperf/commit/44addf0c545ff4a865c177881ca9814484ec97b4). Do not `pip install aiperf` from PyPI (yanked stub). Install that exact revision so a clone matches the benches:
+
+```bash
+pip install "git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4"
+```
+
+Each device README repeats this pin in its setup section. `aiperf --version` should print `0.11.0`.
+
 
 ## License
 

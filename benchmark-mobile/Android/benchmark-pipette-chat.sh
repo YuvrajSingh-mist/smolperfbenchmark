@@ -33,7 +33,7 @@
 #
 # Requirements:
 #   - adb (device authorised), app installed + chat server started in-app
-#   - python3 + pip install aiperf
+#   - python3 + aiperf 0.11.0 (git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4)
 
 set -euo pipefail
 
@@ -123,7 +123,7 @@ ts()   { date '+%Y-%m-%d %H:%M:%S'; }
 # ── Prereqs ───────────────────────────────────────────────────────────────────
 command -v "${ADB%% *}" >/dev/null || err "adb not found in PATH"
 if [ ! -f "$AIPERF_BIN" ] && ! command -v aiperf >/dev/null; then
-    err "aiperf not found. Install with: pip install aiperf"
+    err "aiperf not found. Install with: pip install 'git+https://github.com/ai-dynamo/aiperf.git@44addf0c545ff4a865c177881ca9814484ec97b4'"
 fi
 
 DEVICE=$($ADB devices | awk 'NR==2{print $1}')
