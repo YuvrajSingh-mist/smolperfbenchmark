@@ -13,6 +13,7 @@ smolbenchmark/
 ├── LICENSE-DATASET                          # CC BY 4.0: results, artifacts, leaderboard data
 ├── NOTICE
 ├── CITATION.cff
+├── tools/                                   # hf_cards.py: license guard for HF dataset cards
 ├── pyproject.toml                           # uv: aiperf 0.11.0 + chart libs
 ├── uv.lock
 ├── .python-version                          # 3.12
@@ -99,6 +100,19 @@ Jetson and Raspberry Pi scripts run **on the board**. The Mac Mini folder is bot
 
 - **Code / harness** (scripts, generators, device folders): [Apache License 2.0](LICENSE). Keep the copyright notice and [`NOTICE`](NOTICE) when you redistribute.
 - **Benchmark results, published artifacts, generated charts, and leaderboard data**: [CC BY 4.0](LICENSE-DATASET). Free to use and adapt, including commercially, **with attribution** to Yuvraj Singh (name + link; indicate changes if you modify).
+
+### Hugging Face artifacts
+
+Every dataset published under [`YuvrajSingh9886`](https://huggingface.co/YuvrajSingh9886) from this harness contains results only (aiperf exports, server logs, `tegrastats` logs, generated reports), so its card must declare `license: cc-by-4.0`. Cards are uploaded outside the repo, so verify them before publishing:
+
+```bash
+# fail fast if a card has the wrong license or no citation block
+python tools/hf_cards.py check artifacts/llamacpp/*/README.md
+
+# fix local cards, or published ones (needs HF_TOKEN)
+python tools/hf_cards.py apply artifacts/llamacpp/*/README.md
+python tools/hf_cards.py sync-hf YuvrajSingh9886/jetson-non-reasoning-benchmark-25w
+```
 
 Academic paper citation is a community norm (use the BibTeX below); CC BY is what legally requires credit when results or artifacts are shared or adapted.
 
