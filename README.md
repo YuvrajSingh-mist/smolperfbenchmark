@@ -9,7 +9,10 @@ Each subfolder is self-contained with its own benchmark scripts, chart generator
 ```
 smolbenchmark/
 ├── README.md                                # this file
-├── LICENSE
+├── LICENSE                                  # Apache-2.0: code, scripts, tooling
+├── LICENSE-DATASET                          # CC BY 4.0: results, artifacts, leaderboard data
+├── NOTICE
+├── CITATION.cff
 ├── pyproject.toml                           # uv: aiperf 0.11.0 + chart libs
 ├── uv.lock
 ├── .python-version                          # 3.12
@@ -94,11 +97,14 @@ Jetson and Raspberry Pi scripts run **on the board**. The Mac Mini folder is bot
 
 ## License
 
-MIT
+- **Code / harness** (scripts, generators, device folders): [Apache License 2.0](LICENSE). Keep the copyright notice and [`NOTICE`](NOTICE) when you redistribute.
+- **Benchmark results, published artifacts, generated charts, and leaderboard data**: [CC BY 4.0](LICENSE-DATASET). Free to use and adapt, including commercially, **with attribution** to Yuvraj Singh (name + link; indicate changes if you modify).
+
+Academic paper citation is a community norm (use the BibTeX below); CC BY is what legally requires credit when results or artifacts are shared or adapted.
 
 ## Citation
 
-If you use smolperfbenchmark — the leaderboard, harness, or results — please credit this work and cite it as:
+If you use smolperfbenchmark, the leaderboard, harness, or results, please credit this work and cite it as (also in [`CITATION.cff`](CITATION.cff)):
 
 ```bibtex
 @misc{singh2026smolperfbenchmark,

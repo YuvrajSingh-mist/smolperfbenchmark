@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: If you use smolperfbenchmark (leaderboard, harness, or results), please cite it as below.
+message: If you use smolperfbenchmark (the leaderboard, harness, or results), please cite it as below.
 title: "smolperfbenchmark: On-Device LLM Leaderboard"
 type: software
 authors:
@@ -9,7 +9,7 @@ date-released: "2026-01-01"
 year: 2026
 url: "https://github.com/YuvrajSingh-mist/smolperfbenchmark"
 repository-code: "https://github.com/YuvrajSingh-mist/smolperfbenchmark"
-license: MIT
+license: Apache-2.0
 preferred-citation:
   type: generic
   title: "smolperfbenchmark: On-Device LLM Leaderboard"
@@ -18,3 +18,4 @@ preferred-citation:
       given-names: Yuvraj
   year: 2026
   url: "https://github.com/YuvrajSingh-mist/smolperfbenchmark"
+  howpublished: "\\url{https://github.com/YuvrajSingh-mist/smolperfbenchmark}"
