@@ -65,7 +65,7 @@ smolbenchmark/
 
 Single-board Jetson MoE benchmarks (`single-node/mixture-of-experts/`) are planned but not yet implemented.
 
-Live leaderboard: https://smolbenchmark.vercel.app/ (edit/setup: private [`smolbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolbenchmark-leaderboard) README).
+Live leaderboard: https://smolperfbenchmark.vercel.app/ (edit/setup: private [`smolperfbenchmark-leaderboard`](https://github.com/YuvrajSingh-mist/smolperfbenchmark-leaderboard) README). The legacy `smolbenchmark.vercel.app` host permanently redirects here.
 
 ## Load generator
 

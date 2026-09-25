@@ -12,7 +12,7 @@ Never add `Co-authored-by: Cursor` (or any Cursor/agent co-author trailer) to co
 
 ## Leaderboard site (private)
 
-- **Edit** `leaderboard-site/` (gitignored clone of private `smolperfbenchmark-leaderboard`). Push `main` → Vercel production (`https://smolperfbenchmark.vercel.app/`; legacy `https://smolbenchmark.vercel.app/` dual-serves).
+- **Edit** `leaderboard-site/` (gitignored clone of private `smolperfbenchmark-leaderboard`). Push `main` → Vercel production (`https://smolperfbenchmark.vercel.app/`). The legacy `https://smolbenchmark.vercel.app/` host is a permanent redirect to the canonical host (host rule in `vercel.json`), so Google consolidates on one canonical instead of picking the older alias.
 - **Ignore** the separate public `smolbenchmark` Pages stub for site work — it only redirects github.io → Vercel.
 - Do not develop the site from the Pages stub; normal GitHub users cannot change the private source.
 
